@@ -41,6 +41,7 @@ dependencies:
   image: ^4.5.4
   wp_chessboard: ^0.0.4
   chess_vectors_flutter: ^1.1.0
+  ml_linalg: ^13.12.6
 
 dev_dependencies:
   flutter_test:

@@ -9,13 +9,14 @@ class Chessboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return WPChessboard(
-      size: 300,
-      controller: WPChessboardController(
-        initialFen: fen,
-      ),
+      size: 150,
+
+      controller: WPChessboardController(initialFen: fen),
       squareBuilder: (SquareInfo info) {
         return Container(
-          color: (info.file + info.rank) % 2 == 0
+          width: info.size,
+          height: info.size,
+          color: (info.file + info.rank) % 2 != 0
               ? Colors.orangeAccent
               : Colors.brown,
         );
