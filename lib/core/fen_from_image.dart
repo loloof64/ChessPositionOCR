@@ -1,16 +1,18 @@
 import 'package:chess_position_ocr/core/compute_sequence_score.dart';
+import 'package:chess_position_ocr/core/logger.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
-import 'package:ml_linalg/vector.dart';
 
 import './detect_chessboard_corners.dart';
 import './cropping_and_correlation.dart';
 import './misc_utils.dart';
 
+const defaultNoiseThreshold = 8000.0;
+
 /// Main integrated predictFen function
 Future<String?> predictFen(
   Uint8List memoryImage, {
-  double noiseThreshold = 8000.0,
+  double noiseThreshold = defaultNoiseThreshold,
 }) async {
   final img.Image image = img.decodeImage(memoryImage)!;
   final img.Image grayImage = img.grayscale(image);
@@ -27,6 +29,10 @@ Future<String?> predictFen(
     throw 'Chessboard line detection failed';
   }
 
+  final gxGy = tupleGradients(grayMatrix);
+  final gx = gxGy.$1;
+  final gy = gxGy.$2;
+
   final List<int> potLinesX = detectionResult['potLinesX'] as List<int>;
   final List<int> potLinesY = detectionResult['potLinesY'] as List<int>;
 
@@ -39,20 +45,97 @@ Future<String?> predictFen(
   }
 
   // Pick best (longest) sequences
-  final List<Vector> valsX = detectionResult['valsX'] as List<Vector>;
-  final List<Vector> valsY = detectionResult['valsY'] as List<Vector>;
+  final valsX = computeLineStrengths(
+    image: gx,
+    lineIndices: potLinesX,
+    horizontal: true,
+  );
+  final valsY = computeLineStrengths(
+    image: gy,
+    lineIndices: potLinesY,
+    horizontal: false,
+  );
 
-  trimSequences(seqs: sequencesX, seqVals: valsX);
-  trimSequences(seqs: sequencesY, seqVals: valsY);
+  // Build a lookup table from potLinesX value to index
+  final Map<int, int> potXIndexMap = {
+    for (int i = 0; i < potLinesX.length; i++) potLinesX[i]: i,
+  };
+  // Build a lookup table from potLinesY value to index
+  final Map<int, int> potYIndexMap = {
+    for (int i = 0; i < potLinesY.length; i++) potLinesY[i]: i,
+  };
+
+  logger.d(
+    'Before trimming: ${sequencesX.length} sequences for ${valsX.length} values',
+  );
+  for (final seq in sequencesX) {
+    final vals = seq.map((i) => valsX[sequencesX.indexOf(seq)][0]).toList();
+    final avg = vals.reduce((a, b) => a + b) / vals.length;
+    logger.d('Avg: $avg');
+  }
+
+  trimSequences(
+    seqs: sequencesX,
+    seqVals: sequencesX.map((seq) {
+      return seq
+          .where((x) => potXIndexMap.containsKey(x))
+          .map((x) => valsX[potXIndexMap[x]!])
+          .toList();
+    }).toList(),
+  );
+  trimSequences(
+    seqs: sequencesY,
+    seqVals: sequencesY.map((seq) {
+      return seq
+          .where((y) => potYIndexMap.containsKey(y))
+          .map((y) => valsY[potXIndexMap[y]!])
+          .toList();
+    }).toList(),
+  );
+
+  //////////////////////////////////
+  logger.d('After trimming: ${sequencesX.length} sequences remain');
+  for (var seq in sequencesX) {
+    logger.d(
+      'Sequence length: ${seq.length}, values: ${seq.map((i) => potLinesX.contains(i)).toList()}',
+    );
+  }
+  ////////////////////////////////////
+
+  /////////////////////////////////////
+  logger.d('After trimming: ${sequencesY.length} sequences remain');
+  for (var seq in sequencesY) {
+    logger.d(
+      'Sequence length: ${seq.length}, values: ${seq.map((i) => potLinesY.contains(i)).toList()}',
+    );
+  }
+  ////////////////////////////////////
+
+  ////////////////////////////////////////////
+  logger.i('seqs X: ${sequencesX.length}');
+  logger.i('seqs Y: ${sequencesY.length}');
+  logger.i('vals X: ${valsX.length}');
+  logger.i('vals Y: ${valsY.length}');
+  ////////////////////////////////////////////
 
   final scoresX = computeSequenceScores(valsX);
   final scoresY = computeSequenceScores(valsY);
+
+  ////////////////////////////////////////////
+  logger.i('Scores X: ${scoresX.length}');
+  logger.i('Scores Y: ${scoresY.length}');
+  ////////////////////////////////////////////
 
   final bestXIndex = findBestSequenceIndex(scoresX);
   final bestYIndex = findBestSequenceIndex(scoresY);
 
   final bestSeqX = sequencesX[bestXIndex];
   final bestSeqY = sequencesY[bestYIndex];
+
+  //////////////////////////////////////////
+  logger.i('Best seq X: $bestSeqX');
+  logger.i('Best seq Y: $bestSeqY');
+  ///////////////////////////////////////////
 
   // Step 3: Determine outer corners to crop image roughly
   final outerCorners = getOuterCorners(bestSeqX, bestSeqY);

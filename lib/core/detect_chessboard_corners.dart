@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:ml_linalg/matrix.dart';
 import 'package:ml_linalg/vector.dart';
 
+const defaultNoiseThreshold = 8000.0;
+
 /// Compute standard deviation of a Vector
 double standardDeviation(Vector v) {
   final values = v.toList();
@@ -76,13 +78,14 @@ bool isValidSignal(Vector houghX, Vector houghY, double threshold) {
   final stdY = standardDeviation(houghY);
   final normalizedStdX = stdX / houghX.length;
   final normalizedStdY = stdY / houghY.length;
+
   return min(normalizedStdX, normalizedStdY) >= threshold;
 }
 
 /// Partial conversion of detect_chessboard_corners
 Map<String, dynamic>? detectChessboardCorners(
   Matrix grayImage, {
-  double noiseThreshold = 8000.0,
+  double noiseThreshold = defaultNoiseThreshold,
 }) {
   final (gx, gy) = tupleGradients(grayImage);
   final gxPos = positivePart(gx);
@@ -116,11 +119,16 @@ Map<String, dynamic>? detectChessboardCorners(
   final potLinesX = whereNonZero(filteredHoughGx);
   final potLinesY = whereNonZero(filteredHoughGy);
 
+  final valsX = potLinesX.map((i) => Vector.fromList([houghGx[i]])).toList();
+  final valsY = potLinesY.map((i) => Vector.fromList([houghGy[i]])).toList();
+
   return {
     'potLinesX': potLinesX,
     'potLinesY': potLinesY,
     'houghGx': houghGx,
     'houghGy': houghGy,
+    'valsX': valsX,
+    'valsY': valsY,
   };
 }
 

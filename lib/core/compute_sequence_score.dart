@@ -1,34 +1,55 @@
+import 'package:ml_linalg/matrix.dart';
 import 'package:ml_linalg/vector.dart';
 
-/// Trim sequences to length 7–9 by removing weakest edges based on scores.
-///
-/// seqs: List of sequences (List&lt;int&gt;)
-/// seqVals: List of corresponding scores (List&lt;Vector&gt;)
-///
-/// Returns trimmed sequences and their trimmed scores.
+List<Vector> computeLineStrengths({
+  required Matrix image,
+  required List<int> lineIndices,
+  required bool horizontal,
+}) {
+  return lineIndices.map((index) {
+    final values = horizontal
+        ? image.getRow(index).map((e) => e.abs()).toList()
+        : image.getColumn(index).map((e) => e.abs()).toList();
+    return Vector.fromList(values);
+  }).toList();
+}
+
+/// Trims sequences based on the average L2 norm of their gradient values.
+/// Removes any sequence whose average vector norm is below a threshold (e.g. 50.0).
 void trimSequences({
   required List<List<int>> seqs,
-  required List<Vector> seqVals,
-  int minLen = 7,
-  int maxLen = 9,
+  required List<List<Vector>> seqVals,
+  double normThreshold = 50.0,
 }) {
-  for (int i = 0; i < seqs.length; i++) {
-    var seq = seqs[i];
-    var vals = seqVals[i];
+  assert(
+    seqs.length == seqVals.length,
+    'Each sequence must have value vectors',
+  );
 
-    // While longer than maxLen, remove the weaker edge
-    while (seq.length > maxLen) {
-      if (vals[0] > vals[vals.length - 1]) {
-        seq = seq.sublist(0, seq.length - 1);
-        vals = Vector.fromList(vals.toList().sublist(0, vals.length - 1));
-      } else {
-        seq = seq.sublist(1);
-        vals = Vector.fromList(vals.toList().sublist(1));
-      }
+  final trimmedSeqs = <List<int>>[];
+  final trimmedVals = <List<Vector>>[];
+
+  for (int i = 0; i < seqs.length; i++) {
+    final values = seqVals[i];
+    if (values.isEmpty) continue;
+
+    // Compute average L2 norm of vectors
+    final avgNorm =
+        values.map((v) => v.norm()).reduce((a, b) => a + b) / values.length;
+
+    if (avgNorm >= normThreshold) {
+      trimmedSeqs.add(seqs[i]);
+      trimmedVals.add(values);
     }
-    seqs[i] = seq;
-    seqVals[i] = vals;
   }
+
+  // Clear and refill original lists
+  seqs
+    ..clear()
+    ..addAll(trimmedSeqs);
+  seqVals
+    ..clear()
+    ..addAll(trimmedVals);
 }
 
 /// Compute mean scores for sequences based on their Hough peak values.
