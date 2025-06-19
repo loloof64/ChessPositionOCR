@@ -23,10 +23,10 @@ Future<String?> predictFen(
   }
 
   // Encode as PNG (lossless)
-  Uint8List pngBytes = Uint8List.fromList(img.encodePng(image));
+  Uint8List imageBytes = img.encodeJpg(image);
 
   // Decode to cv.Mat (OpenCV Dart)
-  cv.Mat mat = cv.imdecode(pngBytes, cv.IMREAD_COLOR);
+  cv.Mat mat = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
   cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
 
   // Find chessboard corners
