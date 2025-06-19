@@ -1,11 +1,11 @@
-import 'package:chess_position_ocr/core/compute_sequence_score.dart';
+import 'package:chess_position_ocr/core/chessboard_image.dart';
+import 'package:chess_position_ocr/core/extract_perspective_rectangle.dart';
 import 'package:chess_position_ocr/core/logger.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 
-import './detect_chessboard_corners.dart';
-import './cropping_and_correlation.dart';
-import './misc_utils.dart';
+import 'package:opencv_core/opencv.dart' as cv;
+import 'package:tflite_flutter/tflite_flutter.dart';
 
 const defaultNoiseThreshold = 8000.0;
 
@@ -14,168 +14,117 @@ Future<String?> predictFen(
   Uint8List memoryImage, {
   double noiseThreshold = defaultNoiseThreshold,
 }) async {
-  final img.Image image = img.decodeImage(memoryImage)!;
-  final img.Image grayImage = img.grayscale(image);
-  // Convert img.Image to Matrix (grayscale) for detectChessboardCorners
-  // Assuming detectChessboardCorners expects Matrix<double>
-  final grayMatrix = imageToMatrix(grayImage);
-
-  // Step 1: Rough chessboard corner detection
-  final detectionResult = detectChessboardCorners(
-    grayMatrix,
-    noiseThreshold: noiseThreshold,
+  final interpreter = await Interpreter.fromAsset(
+    'assets/models/chess_piece_model.tflite',
   );
-  if (detectionResult == null) {
-    throw 'Chessboard line detection failed';
+  final image = img.decodeImage(memoryImage);
+  if (image == null) {
+    throw "Failed to decode image";
   }
 
-  final gxGy = tupleGradients(grayMatrix);
-  final gx = gxGy.$1;
-  final gy = gxGy.$2;
+  // Encode as PNG (lossless)
+  Uint8List pngBytes = Uint8List.fromList(img.encodePng(image));
 
-  final List<int> potLinesX = detectionResult['potLinesX'] as List<int>;
-  final List<int> potLinesY = detectionResult['potLinesY'] as List<int>;
+  // Decode to cv.Mat (OpenCV Dart)
+  cv.Mat mat = cv.imdecode(pngBytes, cv.IMREAD_COLOR);
+  cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
 
-  // Step 2: Find all sequences of lines with equal spacing
-  final sequencesX = getAllSequences(potLinesX);
-  final sequencesY = getAllSequences(potLinesY);
+  // Find chessboard corners
+  final patternSize = (7, 7);
+  final (found, corners) = cv.findChessboardCorners(grayMat, patternSize);
 
-  if (sequencesX.isEmpty || sequencesY.isEmpty) {
-    throw 'No valid line sequences found';
+  if (!found) {
+    logger.e("Failed to find chessboard corners.");
+    return null;
   }
 
-  // Pick best (longest) sequences
-  final valsX = computeLineStrengths(
-    image: gx,
-    lineIndices: potLinesX,
-    horizontal: true,
-  );
-  final valsY = computeLineStrengths(
-    image: gy,
-    lineIndices: potLinesY,
-    horizontal: false,
+  final topLeft = corners[0];
+  final topRight = corners[patternSize.$1 - 1]; // last of first line
+  final bottomRight = corners[corners.length - 1];
+  final bottomLeft = corners[corners.length - patternSize.$1];
+
+  final chessboardCorners = [
+    [topLeft.x, topLeft.y],
+    [topRight.x, topRight.y],
+    [bottomRight.x, bottomRight.y],
+    [bottomLeft.x, bottomLeft.y],
+  ];
+
+  // Get image region of chessboard
+  final outputSize = [256, 256];
+
+  final warpedChessboard = extractWarpedRegion(
+    grayMat,
+    chessboardCorners,
+    outputSize,
   );
 
-  // Build a lookup table from potLinesX value to index
-  final Map<int, int> potXIndexMap = {
-    for (int i = 0; i < potLinesX.length; i++) potLinesX[i]: i,
-  };
-  // Build a lookup table from potLinesY value to index
-  final Map<int, int> potYIndexMap = {
-    for (int i = 0; i < potLinesY.length; i++) potLinesY[i]: i,
-  };
+  final (success, newPngBytes) = cv.imencode('.png', warpedChessboard);
+  if (!success) {
+    throw "Failed to encode warped chessboard image";
+  }
+  final img.Image? correctedChessboardImage = img.decodePng(newPngBytes);
 
-  logger.d(
-    'Before trimming: ${sequencesX.length} sequences for ${valsX.length} values',
-  );
-  for (final seq in sequencesX) {
-    final vals = seq.map((i) => valsX[sequencesX.indexOf(seq)][0]).toList();
-    final avg = vals.reduce((a, b) => a + b) / vals.length;
-    logger.d('Avg: $avg');
+  if (correctedChessboardImage == null) {
+    throw "Failed to decode corrected chessboard image";
   }
 
-  trimSequences(
-    seqs: sequencesX,
-    seqVals: sequencesX.map((seq) {
-      return seq
-          .where((x) => potXIndexMap.containsKey(x))
-          .map((x) => valsX[potXIndexMap[x]!])
-          .toList();
-    }).toList(),
-  );
-  trimSequences(
-    seqs: sequencesY,
-    seqVals: sequencesY.map((seq) {
-      return seq
-          .where((y) => potYIndexMap.containsKey(y))
-          .map((y) => valsY[potXIndexMap[y]!])
-          .toList();
-    }).toList(),
+  final chessboardTiles = getChessboardTiles(
+    correctedChessboardImage,
+    useGrayscale: true,
   );
 
-  //////////////////////////////////
-  logger.d('After trimming: ${sequencesX.length} sequences remain');
-  for (var seq in sequencesX) {
-    logger.d(
-      'Sequence length: ${seq.length}, values: ${seq.map((i) => potLinesX.contains(i)).toList()}',
-    );
-  }
-  ////////////////////////////////////
+  final pieces = chessboardTiles
+      .map((tileImage) => predictTile(interpreter, tileImage))
+      .toList();
 
-  /////////////////////////////////////
-  logger.d('After trimming: ${sequencesY.length} sequences remain');
-  for (var seq in sequencesY) {
-    logger.d(
-      'Sequence length: ${seq.length}, values: ${seq.map((i) => potLinesY.contains(i)).toList()}',
-    );
-  }
-  ////////////////////////////////////
+  return buildFenBoard(pieces);
+}
 
-  ////////////////////////////////////////////
-  logger.i('seqs X: ${sequencesX.length}');
-  logger.i('seqs Y: ${sequencesY.length}');
-  logger.i('vals X: ${valsX.length}');
-  logger.i('vals Y: ${valsY.length}');
-  ////////////////////////////////////////////
+/*
+  Given the image data of a tile, try to determine what piece
+  is on the tile, or if it's blank.
 
-  final scoresX = computeSequenceScores(valsX);
-  final scoresY = computeSequenceScores(valsY);
+  Returns a tuple of (predicted FEN char, confidence)
+*/
+String predictTile(Interpreter interpreter, img.Image grayTileImage) {
+  final inputShape = interpreter.getInputTensor(0).shape;
+  final inputSize = inputShape[1];
 
-  ////////////////////////////////////////////
-  logger.i('Scores X: ${scoresX.length}');
-  logger.i('Scores Y: ${scoresY.length}');
-  ////////////////////////////////////////////
-
-  final bestXIndex = findBestSequenceIndex(scoresX);
-  final bestYIndex = findBestSequenceIndex(scoresY);
-
-  final bestSeqX = sequencesX[bestXIndex];
-  final bestSeqY = sequencesY[bestYIndex];
-
-  //////////////////////////////////////////
-  logger.i('Best seq X: $bestSeqX');
-  logger.i('Best seq Y: $bestSeqY');
-  ///////////////////////////////////////////
-
-  // Step 3: Determine outer corners to crop image roughly
-  final outerCorners = getOuterCorners(bestSeqX, bestSeqY);
-
-  // Compute average spacing (dx, dy) between lines (approximate tile size)
-  double dx = (bestSeqX.last - bestSeqX.first) / (bestSeqX.length - 1);
-  double dy = (bestSeqY.last - bestSeqY.first) / (bestSeqY.length - 1);
-
-  // Step 4: Refine corners using correlation (cropping_and_correlation logic)
-  final refinedCorners = findBestCorners(
-    grayImage: grayImage,
-    subSeqsX: sequencesX,
-    subSeqsY: sequencesY,
-    outerCorners: outerCorners,
-    dy: dy,
-    dx: dx,
-  );
-
-  if (refinedCorners == null) {
-    throw 'Corner refinement failed';
+  final resized = img.copyResizeCropSquare(grayTileImage, size: inputSize);
+  List<num> input = List.generate(inputSize * inputSize, (_) => 0.0);
+  for (int y = 0; y < inputSize; y++) {
+    for (int x = 0; x < inputSize; x++) {
+      input[y * inputSize + x] = resized.getPixel(x, y).r;
+    }
   }
 
-  // Step 5: Crop and warp board using refinedCorners
-  final croppedBoard = img.copyCrop(
-    grayImage,
-    x: refinedCorners[1], // left
-    y: refinedCorners[0], // top
-    width: refinedCorners[3] - refinedCorners[1],
-    height: refinedCorners[2] - refinedCorners[0],
+  final output = List.filled(
+    13,
+    0.0,
+  ); // 13 classes: [empty, P, N, B, R, Q, K, p, n, b, r, q, k]
+  interpreter.run(input, output);
+
+  // convert prediction to FEN
+  const labels = [
+    '1',
+    'P',
+    'N',
+    'B',
+    'R',
+    'Q',
+    'K',
+    'p',
+    'n',
+    'b',
+    'r',
+    'q',
+    'k',
+  ];
+  final labelIndex = output.indexWhere(
+    (v) => v == output.reduce((a, b) => a > b ? a : b),
   );
-  final warpedBoard = warpBoardToSquare(croppedBoard, refinedCorners);
-
-  // Step 6: Extract 64 squares and predict pieces (you need to implement this)
-  final squares = extractSquares(warpedBoard);
-  final pieces = await Future.wait(squares.map(predictPieceFromSquare));
-
-  // Step 7: Build FEN string from pieces
-  final boardFen = buildFenBoard(pieces);
-
-  return '$boardFen w - - 0 1';
+  return labels[labelIndex];
 }
 
 /// Convert a flat list of 64 piece strings to FEN board part

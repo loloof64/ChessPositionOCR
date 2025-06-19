@@ -1,5 +1,4 @@
 import 'package:chess_position_ocr/core/fen_from_image.dart';
-import 'package:chess_position_ocr/core/logger.dart';
 import 'package:chess_position_ocr/widgets/chessboard.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -103,7 +102,9 @@ class _MyHomePageState extends State<MyHomePage> {
                 ],
               );
             } else {
-              return const Text("No FEN generated.");
+              return Column(
+                children: [takePhotoButton, const Text("No FEN generated.")],
+              );
             }
           },
         ),
