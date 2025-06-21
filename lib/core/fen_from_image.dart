@@ -22,16 +22,15 @@ Future<String?> predictFen(
     throw "Failed to decode image";
   }
 
-  // Encode as PNG (lossless)
+  // Encode as JPG
   Uint8List imageBytes = img.encodeJpg(image);
 
   // Decode to cv.Mat (OpenCV Dart)
   cv.Mat mat = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
-  cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
 
   // Find chessboard corners
   final patternSize = (7, 7);
-  final (found, corners) = cv.findChessboardCorners(grayMat, patternSize);
+  final (found, corners) = cv.findChessboardCornersSB(mat, patternSize);
 
   if (!found) {
     logger.e("Failed to find chessboard corners.");
@@ -54,7 +53,7 @@ Future<String?> predictFen(
   final outputSize = [256, 256];
 
   final warpedChessboard = extractWarpedRegion(
-    grayMat,
+    mat,
     chessboardCorners,
     outputSize,
   );
