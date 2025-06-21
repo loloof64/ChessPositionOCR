@@ -41,6 +41,8 @@ dependencies:
   chess_vectors_flutter: ^1.1.0
   logger: ^2.5.0
   opencv_core: ^1.4.1
+  matrix2d: ^1.0.4
+  flutter_isolate: ^2.1.0
 
 dev_dependencies:
   flutter_test:

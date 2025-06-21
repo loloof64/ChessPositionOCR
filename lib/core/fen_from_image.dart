@@ -1,6 +1,3 @@
-import 'package:chess_position_ocr/core/chessboard_image.dart';
-import 'package:chess_position_ocr/core/extract_perspective_rectangle.dart';
-import 'package:chess_position_ocr/core/logger.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 
@@ -9,8 +6,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 
 const defaultNoiseThreshold = 8000.0;
 
-/// Main integrated predictFen function
-Future<String?> predictFen(
+Future<(String?, String?)> predictFen(
   Uint8List memoryImage, {
   double noiseThreshold = defaultNoiseThreshold,
 }) async {
@@ -19,7 +15,7 @@ Future<String?> predictFen(
   );
   final image = img.decodeImage(memoryImage);
   if (image == null) {
-    throw "Failed to decode image";
+    return (null, "Failed to decode image");
   }
 
   // Encode as JPG
@@ -27,57 +23,56 @@ Future<String?> predictFen(
 
   // Decode to cv.Mat (OpenCV Dart)
   cv.Mat mat = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+  // Convert to grayscale
+  cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
+  grayMat = cv.gaussianBlur(grayMat, (5, 5), 0);
 
   // Find chessboard corners
   final patternSize = (7, 7);
-  final (found, corners) = cv.findChessboardCornersSB(mat, patternSize);
+  final (found, corners) = cv.findChessboardCorners(grayMat, patternSize);
 
   if (!found) {
-    logger.e("Failed to find chessboard corners.");
-    return null;
+    return (null, "Failed to find chessboard corners.");
   }
 
-  final topLeft = corners[0];
-  final topRight = corners[patternSize.$1 - 1]; // last of first line
-  final bottomRight = corners[corners.length - 1];
-  final bottomLeft = corners[corners.length - patternSize.$1];
+  // Correct perspective
+  final pointsSrc = cv.VecPoint2f.fromList([
+    corners[0],
+    corners[7],
+    corners[56],
+    corners[63],
+  ]);
+  final pointsDst = cv.VecPoint2f.fromList([
+    cv.Point2f(0, 0),
+    cv.Point2f(255, 0),
+    cv.Point2f(0, 255),
+    cv.Point2f(255, 255),
+  ]);
+  final perspectiveMat = cv.getPerspectiveTransform2f(pointsSrc, pointsDst);
+  final warped = cv.warpPerspective(mat, perspectiveMat, (256, 256));
 
-  final chessboardCorners = [
-    [topLeft.x, topLeft.y],
-    [topRight.x, topRight.y],
-    [bottomRight.x, bottomRight.y],
-    [bottomLeft.x, bottomLeft.y],
-  ];
-
-  // Get image region of chessboard
-  final outputSize = [256, 256];
-
-  final warpedChessboard = extractWarpedRegion(
-    mat,
-    chessboardCorners,
-    outputSize,
-  );
-
-  final (success, newPngBytes) = cv.imencode('.png', warpedChessboard);
-  if (!success) {
-    throw "Failed to encode warped chessboard image";
+  // Predict pieces
+  final pieces = List.generate(64, (_) => '');
+  for (int y = 0; y < 8; y++) {
+    for (int x = 0; x < 8; x++) {
+      final tile = cv.Mat.fromMat(
+        warped,
+        roi: cv.Rect(y * 32, (y + 1) * 32, x * 32, (x + 1) * 32),
+      );
+      final (success, encodedBytes) = cv.imencode('.jpg', tile);
+      if (!success) {
+        pieces[y * 8 + x] = '';
+      }
+      final tileImage = img.decodeJpg(encodedBytes);
+      if (tileImage == null) {
+        pieces[y * 8 + x] = '';
+      }
+      final piece = predictTile(interpreter, tileImage!);
+      pieces[y * 8 + x] = piece;
+    }
   }
-  final img.Image? correctedChessboardImage = img.decodePng(newPngBytes);
 
-  if (correctedChessboardImage == null) {
-    throw "Failed to decode corrected chessboard image";
-  }
-
-  final chessboardTiles = getChessboardTiles(
-    correctedChessboardImage,
-    useGrayscale: true,
-  );
-
-  final pieces = chessboardTiles
-      .map((tileImage) => predictTile(interpreter, tileImage))
-      .toList();
-
-  return buildFenBoard(pieces);
+  return (buildFenBoard(pieces), null);
 }
 
 /*

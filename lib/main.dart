@@ -1,14 +1,17 @@
 import 'package:chess_position_ocr/core/fen_from_image.dart';
+import 'package:chess_position_ocr/core/logger.dart';
 import 'package:chess_position_ocr/widgets/chessboard.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_isolate/flutter_isolate.dart';
 import 'package:image_picker/image_picker.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-Future<String?> heavyFenComputation(Uint8List imageData) async {
+@pragma('vm:entry-point')
+Future<(String?, String?)> heavyFenComputation(Uint8List imageData) async {
   return await predictFen(imageData);
 }
 
@@ -39,16 +42,18 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final ImagePicker _picker = ImagePicker();
   Uint8List? _image;
-  Future<String?>? _fenFuture;
+  Future<(String?, String?)>? _fenFuture;
 
   Future<void> _takePhotoAndAnalyze() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.camera);
     if (image == null) return;
 
     final imageData = await image.readAsBytes();
-    final Future<String?> fenFuture = kDebugMode
-        ? Future.value(await heavyFenComputation(imageData))
-        : compute(heavyFenComputation, imageData);
+    final Future<(String?, String?)> fenFuture = flutterCompute(
+      heavyFenComputation,
+      imageData,
+    );
+
     setState(() {
       _image = imageData;
       _fenFuture = fenFuture;
@@ -69,7 +74,7 @@ class _MyHomePageState extends State<MyHomePage> {
       if (_fenFuture == null)
         takePhotoButton
       else if (_fenFuture != null)
-        FutureBuilder<String?>(
+        FutureBuilder<(String?, String?)>(
           future: _fenFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
@@ -92,13 +97,23 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               );
             } else if (snapshot.hasData && _image != null) {
+              final (fen, error) = snapshot.data!;
+              if (error != null) {
+                logger.e(error);
+              }
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   takePhotoButton,
                   Image.memory(_image!, width: 200, fit: BoxFit.cover),
                   const SizedBox(height: 16),
-                  Chessboard(fen: snapshot.data!),
+                  if (error != null)
+                    Text(
+                      error,
+                      style: const TextStyle(color: Colors.red),
+                      textAlign: TextAlign.center,
+                    ),
+                  if (fen != null) Chessboard(fen: fen),
                 ],
               );
             } else {
