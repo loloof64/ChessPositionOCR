@@ -1,4 +1,4 @@
-# chess_position_ocr
+# chess position ocr
 
 Get chess position from a photo
 
