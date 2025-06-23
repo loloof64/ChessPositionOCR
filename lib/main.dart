@@ -45,17 +45,20 @@ class MainWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Chess OCR experiment')),
-      body: Column(
-        children: [
-          TextButton(
-            onPressed: () => _goToOCRPage(context),
-            child: Text("Go to OCR page"),
-          ),
-          TextButton(
-            onPressed: () => _goToBoardIsolationPage(context),
-            child: Text("Go to board isolation page"),
-          ),
-        ],
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TextButton(
+              onPressed: () => _goToOCRPage(context),
+              child: Text("Go to OCR page"),
+            ),
+            TextButton(
+              onPressed: () => _goToBoardIsolationPage(context),
+              child: Text("Go to board isolation page"),
+            ),
+          ],
+        ),
       ),
     );
   }
