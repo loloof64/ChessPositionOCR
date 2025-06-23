@@ -8,8 +8,9 @@ import 'package:flutter_isolate/flutter_isolate.dart';
 import 'package:image_picker/image_picker.dart';
 
 @pragma('vm:entry-point')
-Future<(String?, String?)> heavyFenComputation(Uint8List imageData) async {
-  return await predictFen(imageData);
+Future<Map<String, dynamic>> heavyFenComputation(Uint8List imageData) async {
+  final (result, error) = await predictFen(imageData);
+  return {'result': result, 'error': error};
 }
 
 class BoardPhotoToPosition extends StatefulWidget {
@@ -22,14 +23,14 @@ class BoardPhotoToPosition extends StatefulWidget {
 class _BoardPhotoToPositionState extends State<BoardPhotoToPosition> {
   final ImagePicker _picker = ImagePicker();
   Uint8List? _image;
-  Future<(String?, String?)>? _fenFuture;
+  Future<Map<String, dynamic>>? _fenFuture;
 
   Future<void> _takePhotoAndAnalyze() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.camera);
     if (image == null) return;
 
     final imageData = await image.readAsBytes();
-    final Future<(String?, String?)> fenFuture = flutterCompute(
+    final Future<Map<String, dynamic>> fenFuture = flutterCompute(
       heavyFenComputation,
       imageData,
     );
@@ -54,9 +55,12 @@ class _BoardPhotoToPositionState extends State<BoardPhotoToPosition> {
       if (_fenFuture == null)
         takePhotoButton
       else if (_fenFuture != null)
-        FutureBuilder<(String?, String?)>(
+        FutureBuilder<Map<String, dynamic>>(
           future: _fenFuture,
           builder: (context, snapshot) {
+            final data = snapshot.data;
+            final fen = data?['result'] as String?;
+            final error = data?['error'] as String?;
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Padding(
                 padding: EdgeInsets.all(20),
@@ -77,7 +81,6 @@ class _BoardPhotoToPositionState extends State<BoardPhotoToPosition> {
                 ),
               );
             } else if (snapshot.hasData && _image != null) {
-              final (fen, error) = snapshot.data!;
               if (error != null) {
                 logger.e(error);
               }
