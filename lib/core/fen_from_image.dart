@@ -25,23 +25,60 @@ Future<(String?, String?)> predictFen(
   cv.Mat mat = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
   // Convert to grayscale
   cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
-  grayMat = cv.gaussianBlur(grayMat, (5, 5), 0);
+  cv.Mat blurred = cv.gaussianBlur(grayMat, (5, 5), 0);
 
   // Find chessboard corners
-  final patternSize = (7, 7);
-  final (found, corners) = cv.findChessboardCorners(grayMat, patternSize);
+  final corners = cv.goodFeaturesToTrack(
+    blurred,
+    100, // Number of corners to return
+    0.01, // Minimal accepted quality of corners
+    10, // Minimum possible Euclidean distance between corners
+  );
 
-  if (!found) {
-    return (null, "Failed to find chessboard corners.");
+  cv.Point2f? topLeft, topRight, bottomLeft, bottomRight;
+  double minSum = double.infinity, maxSum = -double.infinity;
+  double minDiff = double.infinity, maxDiff = -double.infinity;
+
+  for (final pt in corners) {
+    final x = pt.x;
+    final y = pt.y;
+    final sum = x + y;
+    final diff = x - y;
+
+    if (sum < minSum) {
+      minSum = sum;
+      topLeft = pt;
+    }
+    if (sum > maxSum) {
+      maxSum = sum;
+      bottomRight = pt;
+    }
+    if (diff < minDiff) {
+      minDiff = diff;
+      bottomLeft = pt;
+    }
+    if (diff > maxDiff) {
+      maxDiff = diff;
+      topRight = pt;
+    }
   }
 
+  final found =
+      topLeft != null &&
+      topRight != null &&
+      bottomLeft != null &&
+      bottomRight != null;
+  if (!found) {
+    return (null, "Failed to find chessboard corners");
+  }
+
+  final chessboardCorners = [topLeft, topRight, bottomRight, bottomLeft];
+
+  final pointsSrc = cv.VecPoint2f.fromList(
+    chessboardCorners.map((pt) => cv.Point2f(pt.x, pt.y)).toList(),
+  );
+
   // Correct perspective
-  final pointsSrc = cv.VecPoint2f.fromList([
-    corners[0],
-    corners[7],
-    corners[56],
-    corners[63],
-  ]);
   final pointsDst = cv.VecPoint2f.fromList([
     cv.Point2f(0, 0),
     cv.Point2f(255, 0),
@@ -55,10 +92,7 @@ Future<(String?, String?)> predictFen(
   final pieces = List.generate(64, (_) => '');
   for (int y = 0; y < 8; y++) {
     for (int x = 0; x < 8; x++) {
-      final tile = cv.Mat.fromMat(
-        warped,
-        roi: cv.Rect(y * 32, (y + 1) * 32, x * 32, (x + 1) * 32),
-      );
+      final tile = cv.Mat.fromMat(warped, roi: cv.Rect(x * 32, y * 32, 32, 32));
       final (success, encodedBytes) = cv.imencode('.jpg', tile);
       if (!success) {
         pieces[y * 8 + x] = '';
@@ -85,18 +119,24 @@ String predictTile(Interpreter interpreter, img.Image grayTileImage) {
   final inputShape = interpreter.getInputTensor(0).shape;
   final inputSize = inputShape[1];
 
+  // Resize to model input size
   final resized = img.copyResizeCropSquare(grayTileImage, size: inputSize);
-  List<num> input = List.generate(inputSize * inputSize, (_) => 0.0);
-  for (int y = 0; y < inputSize; y++) {
-    for (int x = 0; x < inputSize; x++) {
-      input[y * inputSize + x] = resized.getPixel(x, y).r;
-    }
-  }
 
-  final output = List.filled(
-    13,
-    0.0,
-  ); // 13 classes: [empty, P, N, B, R, Q, K, p, n, b, r, q, k]
+  // Prepare input as a 4D tensor: [1, inputSize, inputSize, 1]
+  final input = List.generate(
+    1,
+    (_) => List.generate(
+      inputSize,
+      (y) => List.generate(
+        inputSize,
+        (x) => [resized.getPixel(x, y).r.toDouble()],
+      ),
+    ),
+  );
+
+  final output = List.generate(1, (_) => List.filled(13, 0.0)); // 13 classes
+  final scores = output[0];
+
   interpreter.run(input, output);
 
   // convert prediction to FEN
@@ -115,8 +155,8 @@ String predictTile(Interpreter interpreter, img.Image grayTileImage) {
     'q',
     'k',
   ];
-  final labelIndex = output.indexWhere(
-    (v) => v == output.reduce((a, b) => a > b ? a : b),
+  final labelIndex = scores.indexWhere(
+    (v) => v == scores.reduce((a, b) => a > b ? a : b),
   );
   return labels[labelIndex];
 }
