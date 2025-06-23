@@ -84,21 +84,29 @@ class _BoardPhotoToPositionState extends State<BoardPhotoToPosition> {
               if (error != null) {
                 logger.e(error);
               }
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  takePhotoButton,
-                  Image.memory(_image!, width: 200, fit: BoxFit.cover),
-                  const SizedBox(height: 16),
-                  if (error != null)
-                    Text(
-                      error,
-                      style: const TextStyle(color: Colors.red),
-                      textAlign: TextAlign.center,
-                    ),
-                  if (fen != null) Chessboard(fen: fen),
-                ],
-              );
+              final finalContents = [
+                takePhotoButton,
+                Image.memory(_image!, width: 150, fit: BoxFit.cover),
+                const SizedBox(height: 16),
+                if (error != null)
+                  Text(
+                    error,
+                    style: const TextStyle(color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                if (fen != null) Chessboard(fen: fen),
+              ];
+              return MediaQuery.of(context).orientation == Orientation.portrait
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 20,
+                      children: finalContents,
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 20,
+                      children: finalContents,
+                    );
             } else {
               return Column(
                 children: [takePhotoButton, const Text("No FEN generated.")],
