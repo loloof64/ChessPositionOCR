@@ -87,28 +87,37 @@ class _BoardPhotoToIsolatedBoardPhotoState
               if (error != null) {
                 logger.e(error);
               }
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  takePhotoButton,
-                  if (_image != null)
-                    Image.memory(_image!, width: 200, fit: BoxFit.cover),
-                  const SizedBox(height: 16),
-                  if (error != null)
-                    Text(
-                      error,
-                      style: const TextStyle(color: Colors.red),
-                      textAlign: TextAlign.center,
-                    ),
-                  if (newImageData != null)
-                    Image.memory(
-                      newImageData,
-                      width: 150,
-                      height: 150,
-                      fit: BoxFit.cover,
-                    ),
-                ],
-              );
+
+              final finalContens = [
+                takePhotoButton,
+                if (_image != null)
+                  Image.memory(_image!, width: 150, fit: BoxFit.cover),
+                const SizedBox(height: 16),
+                if (error != null)
+                  Text(
+                    error,
+                    style: const TextStyle(color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
+                if (newImageData != null)
+                  Image.memory(
+                    newImageData,
+                    width: 150,
+                    height: 150,
+                    fit: BoxFit.cover,
+                  ),
+              ];
+              return MediaQuery.of(context).orientation == Orientation.portrait
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 20,
+                      children: finalContens,
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 20,
+                      children: finalContens,
+                    );
             } else {
               return Column(
                 children: [takePhotoButton, const Text("No image generated.")],
