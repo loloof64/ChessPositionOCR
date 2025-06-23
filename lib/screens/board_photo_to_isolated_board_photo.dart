@@ -7,10 +7,11 @@ import 'package:flutter_isolate/flutter_isolate.dart';
 import 'package:image_picker/image_picker.dart';
 
 @pragma('vm:entry-point')
-Future<(Uint8List?, String?)> heavyIsolationComputation(
+Future<Map<String, dynamic>> heavyIsolationComputation(
   Uint8List imageData,
 ) async {
-  return await isolateBoardPhoto(imageData);
+  final (result, error) = await isolateBoardPhoto(imageData);
+  return {'result': result, 'error': error};
 }
 
 class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
@@ -25,14 +26,14 @@ class _BoardPhotoToIsolatedBoardPhotoState
     extends State<BoardPhotoToIsolatedBoardPhoto> {
   final ImagePicker _picker = ImagePicker();
   Uint8List? _image;
-  Future<(Uint8List?, String?)>? _fenFuture;
+  Future<Map<String, dynamic>>? _fenFuture;
 
   Future<void> _takePhotoAndConvert() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.camera);
     if (image == null) return;
 
     final imageData = await image.readAsBytes();
-    final Future<(Uint8List?, String?)> fenFuture = flutterCompute(
+    final Future<Map<String, dynamic>> fenFuture = flutterCompute(
       heavyIsolationComputation,
       imageData,
     );
@@ -57,9 +58,12 @@ class _BoardPhotoToIsolatedBoardPhotoState
       if (_fenFuture == null)
         takePhotoButton
       else if (_fenFuture != null)
-        FutureBuilder<(Uint8List?, String?)>(
+        FutureBuilder<Map<String, dynamic>>(
           future: _fenFuture,
           builder: (context, snapshot) {
+            final data = snapshot.data;
+            final newImageData = data?['result'] as Uint8List?;
+            final error = data?['error'] as String?;
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Padding(
                 padding: EdgeInsets.all(20),
@@ -79,8 +83,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   ],
                 ),
               );
-            } else if (snapshot.hasData && _image != null) {
-              final (newImageData, error) = snapshot.data!;
+            } else if (snapshot.hasData) {
               if (error != null) {
                 logger.e(error);
               }
@@ -88,7 +91,8 @@ class _BoardPhotoToIsolatedBoardPhotoState
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   takePhotoButton,
-                  Image.memory(_image!, width: 200, fit: BoxFit.cover),
+                  if (_image != null)
+                    Image.memory(_image!, width: 200, fit: BoxFit.cover),
                   const SizedBox(height: 16),
                   if (error != null)
                     Text(
@@ -107,7 +111,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
               );
             } else {
               return Column(
-                children: [takePhotoButton, const Text("No FEN generated.")],
+                children: [takePhotoButton, const Text("No image generated.")],
               );
             }
           },
