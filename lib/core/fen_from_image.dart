@@ -69,6 +69,13 @@ Future<(String?, String?)> predictFen(
       bottomLeft != null &&
       bottomRight != null;
   if (!found) {
+    mat.dispose();
+    grayMat.dispose();
+    blurred.dispose();
+    topLeft?.dispose();
+    topRight?.dispose();
+    bottomLeft?.dispose();
+    bottomRight?.dispose();
     return (null, "Failed to find chessboard corners");
   }
 
@@ -105,6 +112,18 @@ Future<(String?, String?)> predictFen(
       pieces[y * 8 + x] = piece;
     }
   }
+
+  mat.dispose();
+  grayMat.dispose();
+  blurred.dispose();
+  topLeft.dispose();
+  topRight.dispose();
+  bottomLeft.dispose();
+  bottomRight.dispose();
+  pointsSrc.dispose();
+  pointsDst.dispose();
+  perspectiveMat.dispose();
+  warped.dispose();
 
   return (buildFenBoard(pieces), null);
 }
