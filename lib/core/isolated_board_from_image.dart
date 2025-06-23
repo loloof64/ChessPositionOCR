@@ -65,6 +65,13 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
       bottomLeft != null &&
       bottomRight != null;
   if (!found) {
+    mat.dispose();
+    grayMat.dispose();
+    blurred.dispose();
+    topLeft?.dispose();
+    topRight?.dispose();
+    bottomLeft?.dispose();
+    bottomRight?.dispose();
     return (null, "Failed to find chessboard corners");
   }
 
@@ -87,8 +94,32 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
   // convert warped to Uint8List
   final (success, warpedBytes) = cv.imencode('.jpg', warped);
   if (!success) {
+    mat.dispose();
+    grayMat.dispose();
+    blurred.dispose();
+    topLeft.dispose();
+    topRight.dispose();
+    bottomLeft.dispose();
+    bottomRight.dispose();
+    pointsSrc.dispose();
+    pointsDst.dispose();
+    perspectiveMat.dispose();
+    warped.dispose();
+
     return (null, "Failed to encode warped image");
   }
+
+  mat.dispose();
+  grayMat.dispose();
+  blurred.dispose();
+  topLeft.dispose();
+  topRight.dispose();
+  bottomLeft.dispose();
+  bottomRight.dispose();
+  pointsSrc.dispose();
+  pointsDst.dispose();
+  perspectiveMat.dispose();
+  warped.dispose();
 
   return (warpedBytes, null);
 }
