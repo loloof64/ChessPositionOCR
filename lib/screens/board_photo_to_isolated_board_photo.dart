@@ -103,8 +103,8 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   if (newImageData != null)
                     Image.memory(
                       newImageData,
-                      width: 200,
-                      height: 200,
+                      width: 150,
+                      height: 150,
                       fit: BoxFit.cover,
                     ),
                 ],
