@@ -82,8 +82,8 @@ Future<(String?, String?)> predictFen(
   final pointsDst = cv.VecPoint2f.fromList([
     cv.Point2f(0, 0),
     cv.Point2f(255, 0),
-    cv.Point2f(0, 255),
     cv.Point2f(255, 255),
+    cv.Point2f(0, 255),
   ]);
   final perspectiveMat = cv.getPerspectiveTransform2f(pointsSrc, pointsDst);
   final warped = cv.warpPerspective(mat, perspectiveMat, (256, 256));
