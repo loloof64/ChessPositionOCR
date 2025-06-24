@@ -46,103 +46,63 @@ class _BoardPhotoToIsolatedBoardPhotoState
 
   @override
   Widget build(BuildContext context) {
-    final isPortrait =
-        MediaQuery.of(context).orientation == Orientation.portrait;
+    final content = _fenFuture == null
+        ? Container()
+        : FutureBuilder<Map<String, dynamic>>(
+            future: _fenFuture,
+            builder: (context, snapshot) {
+              final data = snapshot.data;
+              final newImageData = data?['result'] as Uint8List?;
+              final error = data?['error'] as String?;
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return CircularProgressIndicator();
+              } else if (snapshot.hasError) {
+                return Text(
+                  'Error: ${snapshot.error}',
+                  style: const TextStyle(color: Colors.red),
+                  textAlign: TextAlign.center,
+                );
+              } else if (snapshot.hasData) {
+                if (error != null) {
+                  logger.e(error);
+                }
 
-    final takePhotoButton = TextButton(
-      onPressed: _takePhotoAndConvert,
-      child: const Text("Take photo"),
-    );
-
-    final List<Widget> content = [
-      if (_fenFuture == null)
-        takePhotoButton
-      else if (_fenFuture != null)
-        FutureBuilder<Map<String, dynamic>>(
-          future: _fenFuture,
-          builder: (context, snapshot) {
-            final data = snapshot.data;
-            final newImageData = data?['result'] as Uint8List?;
-            final error = data?['error'] as String?;
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Padding(
-                padding: EdgeInsets.all(20),
-                child: CircularProgressIndicator(),
-              );
-            } else if (snapshot.hasError) {
-              return Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    takePhotoButton,
-                    Text(
-                      'Error: ${snapshot.error}',
-                      style: const TextStyle(color: Colors.red),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              );
-            } else if (snapshot.hasData) {
-              if (error != null) {
-                logger.e(error);
+                return SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 20,
+                    children: [
+                      if (_image != null)
+                        Image.memory(_image!, width: 300, fit: BoxFit.cover),
+                      if (error != null)
+                        Text(
+                          error,
+                          style: const TextStyle(color: Colors.red),
+                          textAlign: TextAlign.center,
+                        ),
+                      if (newImageData != null)
+                        Image.memory(newImageData, fit: BoxFit.cover),
+                    ],
+                  ),
+                );
+              } else {
+                return const Text("No image generated.");
               }
-
-              final finalContens = [
-                takePhotoButton,
-                if (_image != null)
-                  Image.memory(_image!, width: 150, fit: BoxFit.cover),
-                const SizedBox(height: 16),
-                if (error != null)
-                  Text(
-                    error,
-                    style: const TextStyle(color: Colors.red),
-                    textAlign: TextAlign.center,
-                  ),
-                if (newImageData != null)
-                  Image.memory(
-                    newImageData,
-                    width: 150,
-                    height: 150,
-                    fit: BoxFit.cover,
-                  ),
-              ];
-              return MediaQuery.of(context).orientation == Orientation.portrait
-                  ? Column(
-                      mainAxisSize: MainAxisSize.min,
-                      spacing: 20,
-                      children: finalContens,
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      spacing: 20,
-                      children: finalContens,
-                    );
-            } else {
-              return Column(
-                children: [takePhotoButton, const Text("No image generated.")],
-              );
-            }
-          },
-        ),
-    ];
+            },
+          );
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text('Chessboard isolation'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.camera),
+            onPressed: _takePhotoAndConvert,
+          ),
+        ],
       ),
-      body: Center(
-        child: isPortrait
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: content,
-              )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: content,
-              ),
-      ),
+      body: Center(child: content),
     );
   }
 }
