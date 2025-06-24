@@ -9,16 +9,16 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
   double noiseThreshold = defaultNoiseThreshold,
 }) async {
   // Decode to cv.Mat (OpenCV Dart)
-  cv.Mat mat = cv.imdecode(memoryImage, cv.IMREAD_COLOR);
+  cv.Mat mat = await cv.imdecodeAsync(memoryImage, cv.IMREAD_COLOR);
   // Convert to grayscale
-  cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
+  cv.Mat grayMat = await cv.cvtColorAsync(mat, cv.COLOR_BGR2GRAY);
 
   // Find chessboard corners
-  final corners = cv.goodFeaturesToTrack(
+  final corners = await cv.goodFeaturesToTrackAsync(
     grayMat,
     1200, // Number of corners to return
     0.01, // Minimal accepted quality of corners
-    10, // Minimum possible Euclidean distance between corners
+    50, // Minimum possible Euclidean distance between corners
   );
 
   cv.Point2f? topLeft, topRight, bottomLeft, bottomRight;
@@ -77,11 +77,17 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
     cv.Point2f(255, 255),
     cv.Point2f(0, 255),
   ]);
-  final perspectiveMat = cv.getPerspectiveTransform2f(pointsSrc, pointsDst);
-  final warped = cv.warpPerspective(grayMat, perspectiveMat, (256, 256));
+  final perspectiveMat = await cv.getPerspectiveTransform2fAsync(
+    pointsSrc,
+    pointsDst,
+  );
+  final warped = await cv.warpPerspectiveAsync(grayMat, perspectiveMat, (
+    256,
+    256,
+  ));
 
   // convert warped to Uint8List
-  final (success, warpedBytes) = cv.imencode('.jpg', warped);
+  final (success, warpedBytes) = await cv.imencodeAsync('.jpg', warped);
   if (!success) {
     mat.dispose();
     grayMat.dispose();
