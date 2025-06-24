@@ -22,7 +22,7 @@ Future<(String?, String?)> predictFen(
   // Find chessboard corners
   final corners = cv.goodFeaturesToTrack(
     grayMat,
-    100, // Number of corners to return
+    1200, // Number of corners to return
     0.01, // Minimal accepted quality of corners
     10, // Minimum possible Euclidean distance between corners
   );
@@ -84,7 +84,7 @@ Future<(String?, String?)> predictFen(
     cv.Point2f(0, 255),
   ]);
   final perspectiveMat = cv.getPerspectiveTransform2f(pointsSrc, pointsDst);
-  final warped = cv.warpPerspective(mat, perspectiveMat, (256, 256));
+  final warped = cv.warpPerspective(grayMat, perspectiveMat, (256, 256));
 
   // Predict pieces
   final pieces = List.generate(64, (_) => '');

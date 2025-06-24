@@ -17,7 +17,7 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
   // Find chessboard corners
   final corners = cv.goodFeaturesToTrack(
     blurred,
-    100, // Number of corners to return
+    1200, // Number of corners to return
     0.01, // Minimal accepted quality of corners
     10, // Minimum possible Euclidean distance between corners
   );
@@ -80,7 +80,7 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
     cv.Point2f(0, 255),
   ]);
   final perspectiveMat = cv.getPerspectiveTransform2f(pointsSrc, pointsDst);
-  final warped = cv.warpPerspective(mat, perspectiveMat, (256, 256));
+  final warped = cv.warpPerspective(grayMat, perspectiveMat, (256, 256));
 
   // convert warped to Uint8List
   final (success, warpedBytes) = cv.imencode('.jpg', warped);
