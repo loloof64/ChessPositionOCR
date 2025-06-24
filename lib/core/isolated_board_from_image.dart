@@ -2,12 +2,7 @@ import 'package:flutter/services.dart';
 
 import 'package:opencv_core/opencv.dart' as cv;
 
-const defaultNoiseThreshold = 8000.0;
-
-Future<(Uint8List?, String?)> isolateBoardPhoto(
-  Uint8List memoryImage, {
-  double noiseThreshold = defaultNoiseThreshold,
-}) async {
+Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
   // Decode to cv.Mat (OpenCV Dart)
   cv.Mat mat = await cv.imdecodeAsync(memoryImage, cv.IMREAD_COLOR);
   // Convert to grayscale
@@ -16,9 +11,9 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(
   // Find chessboard corners
   final corners = await cv.goodFeaturesToTrackAsync(
     grayMat,
-    1200, // Number of corners to return
-    0.01, // Minimal accepted quality of corners
-    50, // Minimum possible Euclidean distance between corners
+    90, // Number of corners to return
+    0.12, // Minimal accepted quality of corners
+    240, // Minimum possible Euclidean distance between corners
   );
 
   cv.Point2f? topLeft, topRight, bottomLeft, bottomRight;

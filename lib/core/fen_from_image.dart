@@ -4,12 +4,7 @@ import 'package:image/image.dart' as img;
 import 'package:opencv_core/opencv.dart' as cv;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
-const defaultNoiseThreshold = 8000.0;
-
-Future<(String?, String?)> predictFen(
-  Uint8List memoryImage, {
-  double noiseThreshold = defaultNoiseThreshold,
-}) async {
+Future<(String?, String?)> predictFen(Uint8List memoryImage) async {
   final interpreter = await Interpreter.fromAsset(
     'assets/models/chess_piece_model.tflite',
   );
