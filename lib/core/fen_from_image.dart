@@ -18,11 +18,10 @@ Future<(String?, String?)> predictFen(
   cv.Mat mat = cv.imdecode(memoryImage, cv.IMREAD_COLOR);
   // Convert to grayscale
   cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
-  cv.Mat blurred = cv.gaussianBlur(grayMat, (5, 5), 0);
 
   // Find chessboard corners
   final corners = cv.goodFeaturesToTrack(
-    blurred,
+    grayMat,
     100, // Number of corners to return
     0.01, // Minimal accepted quality of corners
     10, // Minimum possible Euclidean distance between corners
@@ -64,7 +63,6 @@ Future<(String?, String?)> predictFen(
   if (!found) {
     mat.dispose();
     grayMat.dispose();
-    blurred.dispose();
     topLeft?.dispose();
     topRight?.dispose();
     bottomLeft?.dispose();
@@ -108,7 +106,6 @@ Future<(String?, String?)> predictFen(
 
   mat.dispose();
   grayMat.dispose();
-  blurred.dispose();
   topLeft.dispose();
   topRight.dispose();
   bottomLeft.dispose();
