@@ -8,23 +8,60 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
   // Convert to grayscale
   cv.Mat grayMat = await cv.cvtColorAsync(mat, cv.COLOR_BGR2GRAY);
 
-  // Find chessboard corners
-  final corners = await cv.goodFeaturesToTrackAsync(
-    grayMat,
-    90, // Number of corners to return
-    0.12, // Minimal accepted quality of corners
-    240, // Minimum possible Euclidean distance between corners
+  final median = await cv.medianBlurAsync(grayMat, 21);
+
+  final (_, thresh) = await cv.thresholdAsync(
+    median,
+    0,
+    255,
+    cv.THRESH_BINARY + cv.THRESH_OTSU,
   );
 
-  cv.Point2f? topLeft, topRight, bottomLeft, bottomRight;
+  // Find contours
+  final (contours, _) = await cv.findContoursAsync(
+    thresh,
+    cv.RETR_EXTERNAL,
+    cv.CHAIN_APPROX_SIMPLE,
+  );
+
+  // Filter for largest quadrilateral
+  cv.VecPoint? boardContour;
+  double maxArea = 0;
+  for (final contour in contours) {
+    final peri = await cv.arcLengthAsync(contour, true);
+    final approx = await cv.approxPolyDPAsync(contour, 0.02 * peri, true);
+    if (approx.length == 4) {
+      final area = await cv.contourAreaAsync(approx);
+      if (area > maxArea) {
+        maxArea = area;
+        boardContour = approx;
+      }
+    }
+  }
+
+  if (boardContour == null) {
+    median.dispose();
+    mat.dispose();
+    grayMat.dispose();
+    thresh.dispose();
+    boardContour?.dispose();
+    return (null, "Failed to find chessboard contours");
+  }
+
+  // Convert to a usable Dart list of points
+  final List<cv.Point2f> points = boardContour
+      .toList()
+      .map((pt) => cv.Point2f(pt.x.toDouble(), pt.y.toDouble()))
+      .toList();
+
+  // Sort the points to order: top-left, top-right, bottom-right, bottom-left
+  cv.Point2f? topLeft, topRight, bottomRight, bottomLeft;
   double minSum = double.infinity, maxSum = -double.infinity;
   double minDiff = double.infinity, maxDiff = -double.infinity;
 
-  for (final pt in corners) {
-    final x = pt.x;
-    final y = pt.y;
-    final sum = x + y;
-    final diff = x - y;
+  for (final pt in points) {
+    final sum = pt.x + pt.y;
+    final diff = pt.x - pt.y;
 
     if (sum < minSum) {
       minSum = sum;
@@ -44,21 +81,23 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
     }
   }
 
-  final found =
-      topLeft != null &&
-      topRight != null &&
-      bottomLeft != null &&
-      bottomRight != null;
-  if (!found) {
+  if (topLeft == null ||
+      topRight == null ||
+      bottomRight == null ||
+      bottomLeft == null) {
+    median.dispose();
     mat.dispose();
-    grayMat.dispose();
+    thresh.dispose();
+    boardContour.dispose();
     topLeft?.dispose();
     topRight?.dispose();
-    bottomLeft?.dispose();
     bottomRight?.dispose();
+    bottomLeft?.dispose();
+    grayMat.dispose();
     return (null, "Failed to find chessboard corners");
   }
 
+  // Now we have the points in the correct order
   final chessboardCorners = [topLeft, topRight, bottomRight, bottomLeft];
 
   final pointsSrc = cv.VecPoint2f.fromList(
@@ -82,10 +121,13 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
   ));
 
   // convert warped to Uint8List
-  final (success, warpedBytes) = await cv.imencodeAsync('.jpg', warped);
+  final (success, warpedBytes) = await cv.imencodeAsync('.jpg', thresh);
   if (!success) {
+    median.dispose();
     mat.dispose();
     grayMat.dispose();
+    thresh.dispose();
+    boardContour.dispose();
     topLeft.dispose();
     topRight.dispose();
     bottomLeft.dispose();
@@ -98,6 +140,7 @@ Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
     return (null, "Failed to encode warped image");
   }
 
+  median.dispose();
   mat.dispose();
   grayMat.dispose();
   topLeft.dispose();
