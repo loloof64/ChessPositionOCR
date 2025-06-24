@@ -13,16 +13,9 @@ Future<(String?, String?)> predictFen(
   final interpreter = await Interpreter.fromAsset(
     'assets/models/chess_piece_model.tflite',
   );
-  final image = img.decodeImage(memoryImage);
-  if (image == null) {
-    return (null, "Failed to decode image");
-  }
-
-  // Encode as JPG
-  Uint8List imageBytes = img.encodeJpg(image);
 
   // Decode to cv.Mat (OpenCV Dart)
-  cv.Mat mat = cv.imdecode(imageBytes, cv.IMREAD_COLOR);
+  cv.Mat mat = cv.imdecode(memoryImage, cv.IMREAD_COLOR);
   // Convert to grayscale
   cv.Mat grayMat = cv.cvtColor(mat, cv.COLOR_BGR2GRAY);
   cv.Mat blurred = cv.gaussianBlur(grayMat, (5, 5), 0);
