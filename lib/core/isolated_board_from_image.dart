@@ -1,156 +1,195 @@
-import 'package:flutter/services.dart';
-
+import 'dart:typed_data';
+import 'package:flutter/cupertino.dart';
 import 'package:opencv_core/opencv.dart' as cv;
 
-Future<(Uint8List?, String?)> isolateBoardPhoto(Uint8List memoryImage) async {
-  // Decode to cv.Mat (OpenCV Dart)
-  cv.Mat mat = await cv.imdecodeAsync(memoryImage, cv.IMREAD_COLOR);
-  // Convert to grayscale
-  cv.Mat grayMat = await cv.cvtColorAsync(mat, cv.COLOR_BGR2GRAY);
+/*
+Returns a map:
+- 'src': Uint8List of the original image with detected corners (for debug)
+- 'dst': Uint8List of the extracted chessboard zone (256x256)
+- 'error': error message if any
+*/
+Future<Map<String, dynamic>> isolateChessboardZone(
+  Uint8List memoryImage,
+) async {
+  final matResources = <cv.Mat>[];
+  final vecResources = <cv.VecVec4i>[];
+  final contoursList = <cv.VecPoint>[];
 
-  final median = await cv.medianBlurAsync(grayMat, 21);
+  try {
+    // 1. Decode the input image
+    debugPrint("Decoding image...");
+    var src = await cv.imdecodeAsync(memoryImage, cv.IMREAD_COLOR);
+    if (src.isEmpty) {
+      return {'src': null, 'dst': null, 'error': "Image decoding failed"};
+    }
+    matResources.add(src);
 
-  final (_, thresh) = await cv.thresholdAsync(
-    median,
-    0,
-    255,
-    cv.THRESH_BINARY + cv.THRESH_OTSU,
-  );
+    // 2. Convert image to grayscale
+    debugPrint("Converting to grayscale...");
+    final gray = await cv.cvtColorAsync(src, cv.COLOR_BGR2GRAY);
+    matResources.add(gray);
 
-  // Find contours
-  final (contours, _) = await cv.findContoursAsync(
-    thresh,
-    cv.RETR_EXTERNAL,
-    cv.CHAIN_APPROX_SIMPLE,
-  );
+    // 3. Enhance contrast using adaptive threshold
+    debugPrint("Applying adaptive threshold...");
+    final thresh = await cv.adaptiveThresholdAsync(
+      gray,
+      255,
+      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+      cv.THRESH_BINARY,
+      11,
+      2,
+    );
+    matResources.add(thresh);
 
-  // Filter for largest quadrilateral
-  cv.VecPoint? boardContour;
-  double maxArea = 0;
-  for (final contour in contours) {
-    final peri = await cv.arcLengthAsync(contour, true);
-    final approx = await cv.approxPolyDPAsync(contour, 0.02 * peri, true);
-    if (approx.length == 4) {
-      final area = await cv.contourAreaAsync(approx);
-      if (area > maxArea) {
-        maxArea = area;
-        boardContour = approx;
+    // 4. Detect edges using Canny
+    debugPrint("Detecting edges...");
+    final edges = await cv.cannyAsync(thresh, 50, 150);
+    matResources.add(edges);
+
+    // 5. Dilate edges to close gaps
+    debugPrint("Dilating edges...");
+    final kernel = await cv.getStructuringElementAsync(cv.MORPH_RECT, (3, 3));
+    matResources.add(kernel);
+    final dilated = await cv.dilateAsync(edges, kernel);
+    matResources.add(dilated);
+
+    // 6. Find contours
+    debugPrint("Finding contours...");
+    final (contours, hierarchy) = await cv.findContoursAsync(
+      dilated,
+      cv.RETR_EXTERNAL,
+      cv.CHAIN_APPROX_SIMPLE,
+    );
+    contoursList.addAll(contours);
+    vecResources.add(hierarchy);
+
+    // 7. Filter for the largest square-like quadrilateral
+    debugPrint("Filtering contours...");
+    final imageArea = src.width * src.height;
+    List<cv.Point>? bestQuad;
+    double maxArea = 0;
+    for (final contour in contours) {
+      // Approximate contour to polygon
+      final contourLength = await cv.arcLengthAsync(contour, true);
+      final epsilon = 0.02 * contourLength;
+      final approx = await cv.approxPolyDPAsync(contour, epsilon, true);
+
+      // Check for convex quadrilateral
+      if (approx.length == 4 && cv.isContourConvex(approx)) {
+        final area = await cv.contourAreaAsync(approx);
+        // Filter by area (at least 30% of the image) and aspect ratio (nearly square)
+        if (area > 0.3 * imageArea) {
+          final rect = cv.boundingRect(approx);
+          final aspect = rect.width / rect.height;
+          if (aspect > 0.8 && aspect < 1.2 && area > maxArea) {
+            maxArea = area;
+            bestQuad = List.generate(
+              4,
+              (i) => cv.Point(approx[i].x, approx[i].y),
+            );
+          }
+        }
       }
+      approx.dispose();
+    }
+
+    if (bestQuad == null) {
+      return {'src': null, 'dst': null, 'error': "Chessboard not detected"};
+    }
+
+    // 8. Order corners: top-left, top-right, bottom-right, bottom-left
+    debugPrint("Ordering corners...");
+    cv.Point topLeft = bestQuad.reduce(
+      (a, b) => (a.x + a.y < b.x + b.y) ? a : b,
+    );
+    cv.Point bottomRight = bestQuad.reduce(
+      (a, b) => (a.x + a.y > b.x + b.y) ? a : b,
+    );
+    cv.Point topRight = bestQuad.reduce(
+      (a, b) => (a.x - a.y > b.x - b.y) ? a : b,
+    );
+    cv.Point bottomLeft = bestQuad.reduce(
+      (a, b) => (a.y - a.x > b.y - b.x) ? a : b,
+    );
+    final ordered = [topLeft, topRight, bottomRight, bottomLeft];
+
+    // 9. Perspective transform to 256x256 square
+    debugPrint("Calculating perspective transform...");
+    final dstPoints = [
+      cv.Point(0, 0),
+      cv.Point(255, 0),
+      cv.Point(255, 255),
+      cv.Point(0, 255),
+    ];
+    final transform = await cv.getPerspectiveTransformAsync(
+      cv.VecPoint.fromList(ordered),
+      cv.VecPoint.fromList(dstPoints),
+    );
+    matResources.add(transform);
+
+    debugPrint("Warping perspective...");
+    final warped = await cv.warpPerspectiveAsync(src, transform, (256, 256));
+    matResources.add(warped);
+
+    // 10. Encode result image
+    debugPrint("Encoding result...");
+    final (success1, resultBytes) = await cv.imencodeAsync('.png', warped);
+    if (!success1) {
+      return {
+        'src': null,
+        'dst': null,
+        'error': "Result image encoding failed",
+      };
+    }
+
+    // 11. Draw detected corners for debug
+    for (final p in bestQuad) {
+      src = await cv.circleAsync(
+        src,
+        p,
+        10,
+        cv.Scalar(0, 0, 255),
+        thickness: 5,
+      );
+    }
+    final (success2, srcBytes) = await cv.imencodeAsync('.png', src);
+    if (!success2) {
+      return {
+        'src': null,
+        'dst': null,
+        'error': "Source image encoding failed",
+      };
+    }
+
+    return {'src': srcBytes, 'dst': resultBytes, 'error': null};
+  } catch (e, stack) {
+    return {'src': null, 'dst': null, 'error': "Error: $e\n$stack"};
+  } finally {
+    // Always clean up all allocated resources
+    debugPrint("Cleaning up resources...");
+    _cleanupMatList(matResources);
+    _cleanupVecList(vecResources);
+  }
+}
+
+// Helper function to dispose cv.Mat resources
+void _cleanupMatList(List<cv.Mat> mats) {
+  for (final mat in mats) {
+    try {
+      mat.dispose();
+    } catch (e) {
+      debugPrint("Mat disposal error: $e");
     }
   }
+}
 
-  if (boardContour == null) {
-    median.dispose();
-    mat.dispose();
-    grayMat.dispose();
-    thresh.dispose();
-    boardContour?.dispose();
-    return (null, "Failed to find chessboard contours");
-  }
-
-  // Convert to a usable Dart list of points
-  final List<cv.Point2f> points = boardContour
-      .toList()
-      .map((pt) => cv.Point2f(pt.x.toDouble(), pt.y.toDouble()))
-      .toList();
-
-  // Sort the points to order: top-left, top-right, bottom-right, bottom-left
-  cv.Point2f? topLeft, topRight, bottomRight, bottomLeft;
-  double minSum = double.infinity, maxSum = -double.infinity;
-  double minDiff = double.infinity, maxDiff = -double.infinity;
-
-  for (final pt in points) {
-    final sum = pt.x + pt.y;
-    final diff = pt.x - pt.y;
-
-    if (sum < minSum) {
-      minSum = sum;
-      topLeft = pt;
-    }
-    if (sum > maxSum) {
-      maxSum = sum;
-      bottomRight = pt;
-    }
-    if (diff < minDiff) {
-      minDiff = diff;
-      bottomLeft = pt;
-    }
-    if (diff > maxDiff) {
-      maxDiff = diff;
-      topRight = pt;
+// Helper function to dispose cv.VecVec4i resources
+void _cleanupVecList(List<cv.VecVec4i> vecs) {
+  for (final vec in vecs) {
+    try {
+      vec.dispose();
+    } catch (e) {
+      debugPrint("Vec disposal error: $e");
     }
   }
-
-  if (topLeft == null ||
-      topRight == null ||
-      bottomRight == null ||
-      bottomLeft == null) {
-    median.dispose();
-    mat.dispose();
-    thresh.dispose();
-    boardContour.dispose();
-    topLeft?.dispose();
-    topRight?.dispose();
-    bottomRight?.dispose();
-    bottomLeft?.dispose();
-    grayMat.dispose();
-    return (null, "Failed to find chessboard corners");
-  }
-
-  // Now we have the points in the correct order
-  final chessboardCorners = [topLeft, topRight, bottomRight, bottomLeft];
-
-  final pointsSrc = cv.VecPoint2f.fromList(
-    chessboardCorners.map((pt) => cv.Point2f(pt.x, pt.y)).toList(),
-  );
-
-  // Correct perspective
-  final pointsDst = cv.VecPoint2f.fromList([
-    cv.Point2f(0, 0),
-    cv.Point2f(255, 0),
-    cv.Point2f(255, 255),
-    cv.Point2f(0, 255),
-  ]);
-  final perspectiveMat = await cv.getPerspectiveTransform2fAsync(
-    pointsSrc,
-    pointsDst,
-  );
-  final warped = await cv.warpPerspectiveAsync(grayMat, perspectiveMat, (
-    256,
-    256,
-  ));
-
-  // convert warped to Uint8List
-  final (success, warpedBytes) = await cv.imencodeAsync('.jpg', thresh);
-  if (!success) {
-    median.dispose();
-    mat.dispose();
-    grayMat.dispose();
-    thresh.dispose();
-    boardContour.dispose();
-    topLeft.dispose();
-    topRight.dispose();
-    bottomLeft.dispose();
-    bottomRight.dispose();
-    pointsSrc.dispose();
-    pointsDst.dispose();
-    perspectiveMat.dispose();
-    warped.dispose();
-
-    return (null, "Failed to encode warped image");
-  }
-
-  median.dispose();
-  mat.dispose();
-  grayMat.dispose();
-  topLeft.dispose();
-  topRight.dispose();
-  bottomLeft.dispose();
-  bottomRight.dispose();
-  pointsSrc.dispose();
-  pointsDst.dispose();
-  perspectiveMat.dispose();
-  warped.dispose();
-
-  return (warpedBytes, null);
 }

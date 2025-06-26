@@ -5,13 +5,13 @@ import 'package:chess_position_ocr/core/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_isolate/flutter_isolate.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 
 @pragma('vm:entry-point')
 Future<Map<String, dynamic>> heavyIsolationComputation(
   Uint8List imageData,
 ) async {
-  final (result, error) = await isolateBoardPhoto(imageData);
-  return {'result': result, 'error': error};
+  return await isolateChessboardZone(imageData);
 }
 
 class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
@@ -52,8 +52,10 @@ class _BoardPhotoToIsolatedBoardPhotoState
             future: _fenFuture,
             builder: (context, snapshot) {
               final data = snapshot.data;
-              final newImageData = data?['result'] as Uint8List?;
+              final srcBytes = data?['src'] as Uint8List?;
+              final dstBytes = data?['dst'] as Uint8List?;
               final error = data?['error'] as String?;
+
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return CircularProgressIndicator();
               } else if (snapshot.hasError) {
@@ -67,21 +69,39 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   logger.e(error);
                 }
 
+                final sourceImage = srcBytes ?? (_image);
+                if (srcBytes != null) {
+                  saveToGallery(
+                    srcBytes,
+                    "testInput.png",
+                  ).then((success) => logger.d(success));
+                }
+                if (dstBytes != null) {
+                  saveToGallery(
+                    dstBytes,
+                    "testOutput.png",
+                  ).then((success) => logger.d(success));
+                }
+
                 return SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     spacing: 20,
                     children: [
-                      if (_image != null)
-                        Image.memory(_image!, width: 300, fit: BoxFit.cover),
+                      if (sourceImage != null)
+                        Image.memory(
+                          sourceImage,
+                          width: 300,
+                          fit: BoxFit.cover,
+                        ),
                       if (error != null)
                         Text(
                           error,
                           style: const TextStyle(color: Colors.red),
                           textAlign: TextAlign.center,
                         ),
-                      if (newImageData != null)
-                        Image.memory(newImageData, fit: BoxFit.cover),
+                      if (dstBytes != null)
+                        Image.memory(dstBytes, fit: BoxFit.cover),
                     ],
                   ),
                 );
@@ -105,4 +125,17 @@ class _BoardPhotoToIsolatedBoardPhotoState
       body: Center(child: content),
     );
   }
+}
+
+// Save image from Uint8List to gallery
+Future<bool> saveToGallery(Uint8List imageBytes, String fileName) async {
+  // Save the image to the gallery (Pictures directory)
+  final result = await SaverGallery.saveImage(
+    imageBytes,
+    quality: 100,
+    fileName: fileName,
+    skipIfExists: false,
+  );
+
+  return result.isSuccess;
 }
