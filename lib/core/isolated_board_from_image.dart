@@ -10,7 +10,7 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
     // 1. Decode image
     var src = await cv.imdecodeAsync(memoryImage, cv.IMREAD_COLOR);
     if (src.isEmpty) {
-      return {'src': null, 'dst': null, 'error': "Image decoding failed"};
+      return {'steps': [], 'dst': null, 'error': "Image decoding failed"};
     }
     matResources.add(src);
 
@@ -18,9 +18,13 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
     final gray = await cv.cvtColorAsync(src, cv.COLOR_BGR2GRAY);
     matResources.add(gray);
 
+    // Histogram equalization
+    final equalized = await cv.equalizeHistAsync(gray);
+    matResources.add(equalized);
+
     // 3. Find contours
     final (contours, _) = await cv.findContoursAsync(
-      gray,
+      equalized,
       cv.RETR_EXTERNAL,
       cv.CHAIN_APPROX_SIMPLE,
     );
@@ -36,13 +40,11 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
     );
 
     final (okSrc, srcBytes) = await cv.imencodeAsync('.png', src);
-    if (!okSrc) {
-      return {
-        'src': null,
-        'dst': null,
-        'error': "Source image encoding failed",
-      };
-    }
+    final (okGray, grayBytes) = await cv.imencodeAsync('.png', gray);
+    final (okEqualized, equalizedBytes) = await cv.imencodeAsync(
+      '.png',
+      equalized,
+    );
 
     // 4. Find largest convex quadrilateral with aspect ratio ~1
     List<cv.Point>? bestQuad;
@@ -69,7 +71,15 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
     }
 
     if (bestQuad == null) {
-      return {'src': srcBytes, 'dst': null, 'error': "Chessboard not detected"};
+      return {
+        'steps': [
+          if (okSrc) srcBytes,
+          if (okGray) grayBytes,
+          if (okEqualized) equalizedBytes,
+        ],
+        'dst': null,
+        'error': "Chessboard not detected",
+      };
     }
 
     // 5. Sort corners (top-left, top-right, bottom-right, bottom-left)
@@ -93,14 +103,7 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
     matResources.add(warped);
 
     // 7. Encode result
-    final (ok1, dstBytes) = await cv.imencodeAsync('.png', warped);
-    if (!ok1) {
-      return {
-        'src': srcBytes,
-        'dst': null,
-        'error': "Result image encoding failed",
-      };
-    }
+    final (okWarped, dstBytes) = await cv.imencodeAsync('.png', warped);
 
     // 8. Draw detected corners on source for debugging
     for (final p in bestQuad) {
@@ -113,9 +116,17 @@ Future<Map<String, dynamic>> extractChessboard(Uint8List memoryImage) async {
       );
     }
 
-    return {'src': srcBytes, 'dst': dstBytes, 'error': null};
+    return {
+      'steps': [
+        if (okSrc) srcBytes,
+        if (okGray) grayBytes,
+        if (okEqualized) equalizedBytes,
+      ],
+      'dst': okWarped ? dstBytes : null,
+      'error': null,
+    };
   } catch (e, stack) {
-    return {'src': null, 'dst': null, 'error': "Error: $e\n$stack"};
+    return {'steps': [], 'dst': null, 'error': "Error: $e\n$stack"};
   } finally {
     _cleanupMatList(matResources);
   }

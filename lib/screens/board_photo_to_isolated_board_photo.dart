@@ -52,7 +52,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
             future: _fenFuture,
             builder: (context, snapshot) {
               final data = snapshot.data;
-              final srcBytes = data?['src'] as Uint8List?;
+              final stepsImagesBytes = data?['steps'] as List<Uint8List>;
               final dstBytes = data?['dst'] as Uint8List?;
               final error = data?['error'] as String?;
 
@@ -69,20 +69,12 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   logger.e(error);
                 }
 
-                final sourceImage = srcBytes ?? (_image);
-                if (srcBytes != null) {
-                  saveToGallery(
-                    srcBytes,
-                    "testInput",
-                    "png",
-                  ).then((success) => {});
-                }
-                if (dstBytes != null) {
-                  saveToGallery(
-                    dstBytes,
-                    "testOutput",
-                    "png",
-                  ).then((success) => {});
+                if (stepsImagesBytes.isNotEmpty) {
+                  var i = 0;
+                  for (final bytes in stepsImagesBytes) {
+                    saveToGallery(bytes, "step_$i", "jpg");
+                    i++;
+                  }
                 }
 
                 return SingleChildScrollView(
@@ -90,11 +82,22 @@ class _BoardPhotoToIsolatedBoardPhotoState
                     mainAxisSize: MainAxisSize.min,
                     spacing: 20,
                     children: [
-                      if (sourceImage != null)
-                        Image.memory(
-                          sourceImage,
-                          width: 300,
-                          fit: BoxFit.cover,
+                      if (_image != null)
+                        Image.memory(_image!, width: 300, fit: BoxFit.cover),
+                      if (stepsImagesBytes.isNotEmpty)
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: stepsImagesBytes
+                                .map(
+                                  (bytes) => Image.memory(
+                                    bytes,
+                                    width: 300,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                                .toList(),
+                          ),
                         ),
                       if (error != null)
                         Text(
