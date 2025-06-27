@@ -11,7 +11,7 @@ import 'package:saver_gallery/saver_gallery.dart';
 Future<Map<String, dynamic>> heavyIsolationComputation(
   Uint8List imageData,
 ) async {
-  return await isolateChessboardZone(imageData);
+  return await extractChessboard(imageData);
 }
 
 class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
@@ -73,14 +73,16 @@ class _BoardPhotoToIsolatedBoardPhotoState
                 if (srcBytes != null) {
                   saveToGallery(
                     srcBytes,
-                    "testInput.png",
-                  ).then((success) => logger.d(success));
+                    "testInput",
+                    "png",
+                  ).then((success) => {});
                 }
                 if (dstBytes != null) {
                   saveToGallery(
                     dstBytes,
-                    "testOutput.png",
-                  ).then((success) => logger.d(success));
+                    "testOutput",
+                    "png",
+                  ).then((success) => {});
                 }
 
                 return SingleChildScrollView(
@@ -128,11 +130,16 @@ class _BoardPhotoToIsolatedBoardPhotoState
 }
 
 // Save image from Uint8List to gallery
-Future<bool> saveToGallery(Uint8List imageBytes, String fileName) async {
+Future<bool> saveToGallery(
+  Uint8List imageBytes,
+  String fileName,
+  String extension,
+) async {
   // Save the image to the gallery (Pictures directory)
   final result = await SaverGallery.saveImage(
     imageBytes,
     quality: 100,
+    extension: extension,
     fileName: fileName,
     skipIfExists: false,
   );
