@@ -52,7 +52,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
             future: _fenFuture,
             builder: (context, snapshot) {
               final data = snapshot.data;
-              final stepsImagesBytes = data?['steps'] as List<Uint8List>;
+              final stepsImagesBytes = data?['steps'] as List<Uint8List>?;
               final dstBytes = data?['dst'] as Uint8List?;
               final error = data?['error'] as String?;
 
@@ -69,9 +69,9 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   logger.e(error);
                 }
 
-                if (stepsImagesBytes.isNotEmpty) {
+                if (stepsImagesBytes?.isNotEmpty == true) {
                   var i = 0;
-                  for (final bytes in stepsImagesBytes) {
+                  for (final bytes in stepsImagesBytes!) {
                     saveToGallery(bytes, "step_$i", "jpg");
                     i++;
                   }
@@ -84,11 +84,11 @@ class _BoardPhotoToIsolatedBoardPhotoState
                     children: [
                       if (_image != null)
                         Image.memory(_image!, width: 300, fit: BoxFit.cover),
-                      if (stepsImagesBytes.isNotEmpty)
+                      if (stepsImagesBytes?.isNotEmpty == true)
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(
-                            children: stepsImagesBytes
+                            children: stepsImagesBytes!
                                 .map(
                                   (bytes) => Image.memory(
                                     bytes,
