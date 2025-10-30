@@ -157,7 +157,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
         } catch (e, stackTrace) {
           developer.log('OpenCV processing failed: $e', name: 'ChessboardOCR');
           developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
-          return null;
+          rethrow; // Let the UI handle the error
         }
       });
 
@@ -169,6 +169,21 @@ class _BoardPhotoToIsolatedBoardPhotoState
     } catch (e, stackTrace) {
       developer.log('Error in _takePhotoAndConvert: $e', name: 'ChessboardOCR');
       developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
+
+      // Show Snackbar for early errors
+      if (mounted) {
+        final message = e is ChessboardExtractionException
+            ? e.getUserMessage()
+            : 'Failed to capture photo. Please try again.';
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
 
       // Resume preview if there was an error
       try {
@@ -319,13 +334,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text('Chessboard isolation'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.camera),
-            onPressed: _takePhotoAndConvert,
-          ),
-        ],
+        title: Text('Chessboard isolation'), 
       ),
       body: Center(child: content),
     );

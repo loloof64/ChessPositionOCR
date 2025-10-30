@@ -82,75 +82,236 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       resized = gray;
     }
 
-    // Use goodFeaturesToTrack to find corner points (more robust than pattern matching)
-    _log('Running goodFeaturesToTrack...');
-    final corners = cv.goodFeaturesToTrack(
-      resized,
-      800, // Max corners to return (reduced to focus on strongest features)
-      0.02, // Quality threshold (increased for better corner quality)
-      12, // Min distance between corners (increased to reduce noise)
-    );
-    _log('Found ${corners.length} corner features');
+    // Enhanced corner detection using Canny edge detection + contours
+    _log('Applying edge detection...');
 
-    if (corners.length < 4) {
-      _log('ERROR: Not enough corners found (need at least 4)');
+    // Apply Gaussian blur to reduce noise
+    final blurred = cv.gaussianBlur(resized, (5, 5), 0);
+    _log('Gaussian blur applied');
+
+    // Use Canny edge detection - better for finding actual edges
+    final edges = cv.canny(blurred, 50, 150);
+    _log('Canny edge detection applied');
+    blurred.dispose();
+
+    // Apply dilation to connect broken edges
+    final kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 3));
+    final dilated = cv.dilate(edges, kernel);
+    kernel.dispose();
+    _log('Edge dilation applied');
+    edges.dispose();
+
+    // Find contours - use RETR_LIST to get all contours, not just external
+    final contoursResult = cv.findContours(
+      dilated,
+      cv.RETR_LIST,
+      cv.CHAIN_APPROX_SIMPLE,
+    );
+    final contours = contoursResult.$1;
+    final hierarchy = contoursResult.$2;
+    _log('Found ${contours.length} contours');
+
+    dilated.dispose();
+
+    if (contours.isEmpty) {
+      _log('ERROR: No contours found');
       mat.dispose();
       gray.dispose();
       if (scale < 1.0) resized.dispose();
-      corners.dispose();
+      contours.dispose();
+      hierarchy.dispose();
       throw ChessboardExtractionException(
         ChessboardExtractionError.notEnoughCorners,
       );
     }
 
-    // Refine corners to sub-pixel accuracy
-    cv.cornerSubPix(resized, corners, (11, 11), (-1, -1));
-    _log('Sub-pixel refinement done');
+    // Find the best quadrilateral contour (likely the chessboard)
+    List<cv.Point>? bestContourPoints;
+    double maxArea = 0;
+    final imageArea = resized.width * resized.height;
 
-    // Find the 4 extreme corners using a more robust method
-    // First, convert to List for easier manipulation
-    final cornersList = List<cv.Point2f>.generate(
-      corners.length,
-      (i) => corners[i],
-    );
+    for (int i = 0; i < contours.length; i++) {
+      final contour = contours[i];
+      final area = cv.contourArea(contour);
 
-    // Sort by x+y (top-left to bottom-right diagonal)
-    cornersList.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
-    final topLeftCandidates = cornersList
-        .take(math.min(20, cornersList.length ~/ 4))
-        .toList();
-    final bottomRightCandidates = cornersList.reversed
-        .take(math.min(20, cornersList.length ~/ 4))
-        .toList();
+      // Skip very small contours
+      if (area < 5000) {
+        continue;
+      }
 
-    // Sort by x-y (top-right to bottom-left diagonal)
-    cornersList.sort((a, b) => (a.x - a.y).compareTo(b.x - b.y));
-    final bottomLeftCandidates = cornersList
-        .take(math.min(20, cornersList.length ~/ 4))
-        .toList();
-    final topRightCandidates = cornersList.reversed
-        .take(math.min(20, cornersList.length ~/ 4))
-        .toList();
+      // Approximate the contour to a polygon
+      final peri = cv.arcLength(contour, true);
+      final approx = cv.approxPolyDP(contour, 0.02 * peri, true);
 
-    // Find the most extreme points from candidates (most reliable corners)
-    var topLeft = topLeftCandidates.reduce(
-      (curr, next) => (curr.x + curr.y < next.x + next.y) ? curr : next,
-    );
-    var bottomRight = bottomRightCandidates.reduce(
-      (curr, next) => (curr.x + curr.y > next.x + next.y) ? curr : next,
-    );
-    var bottomLeft = bottomLeftCandidates.reduce(
-      (curr, next) => (curr.x - curr.y < next.x - next.y) ? curr : next,
-    );
-    var topRight = topRightCandidates.reduce(
-      (curr, next) => (curr.x - curr.y > next.x - next.y) ? curr : next,
-    );
+      // Look for quadrilaterals (4 sides)
+      if (approx.length == 4) {
+        final areaRatio = area / imageArea;
 
-    _log(
-      'Selected corners from candidate pools (${topLeftCandidates.length}, ${topRightCandidates.length}, ${bottomLeftCandidates.length}, ${bottomRightCandidates.length} candidates)',
-    );
+        // Reject if too large (>90% of image = likely the border)
+        // or too close to edges
+        bool isValid = true;
 
-    // Validate that corners form a reasonable quadrilateral
+        if (areaRatio > 0.90) {
+          _log(
+            'Rejecting contour: too large (${(areaRatio * 100).toStringAsFixed(1)}% of image)',
+          );
+          isValid = false;
+        } else {
+          // Check if corners are too close to image borders
+          const edgeThreshold = 8; // pixels from edge
+          for (int j = 0; j < approx.length; j++) {
+            final pt = approx[j];
+            if (pt.x < edgeThreshold ||
+                pt.y < edgeThreshold ||
+                pt.x > resized.width - edgeThreshold ||
+                pt.y > resized.height - edgeThreshold) {
+              isValid = false;
+              break;
+            }
+          }
+        }
+
+        if (isValid && area > maxArea) {
+          maxArea = area;
+          // Copy the points before disposing
+          bestContourPoints = List<cv.Point>.generate(
+            approx.length,
+            (i) => approx[i],
+          );
+          _log(
+            'Accepted contour with area: ${area.toStringAsFixed(0)} (${(areaRatio * 100).toStringAsFixed(1)}% of image)',
+          );
+        }
+      }
+      approx.dispose();
+    }
+
+    contours.dispose();
+    hierarchy.dispose();
+
+    // Extract the 4 corners
+    late cv.Point2f topLeft, topRight, bottomLeft, bottomRight;
+
+    if (bestContourPoints == null) {
+      _log(
+        'ERROR: No quadrilateral contour found, falling back to feature detection',
+      );
+
+      // Fallback: Use goodFeaturesToTrack with better filtering
+      final corners = cv.goodFeaturesToTrack(resized, 800, 0.02, 12);
+      _log('Fallback: Found ${corners.length} corner features');
+
+      if (corners.length < 4) {
+        mat.dispose();
+        gray.dispose();
+        if (scale < 1.0) resized.dispose();
+        corners.dispose();
+        throw ChessboardExtractionException(
+          ChessboardExtractionError.notEnoughCorners,
+        );
+      }
+
+      // Instead of filtering by edge distance, use a clustering approach
+      // to find the 4 corner regions with highest concentration of features
+
+      // Divide image into quadrants and find the most extreme point in each
+      final imgCenterX = resized.width / 2;
+      final imgCenterY = resized.height / 2;
+
+      final topLeftQuadrant = <cv.Point2f>[];
+      final topRightQuadrant = <cv.Point2f>[];
+      final bottomLeftQuadrant = <cv.Point2f>[];
+      final bottomRightQuadrant = <cv.Point2f>[];
+
+      for (final pt in corners) {
+        if (pt.x < imgCenterX && pt.y < imgCenterY) {
+          topLeftQuadrant.add(pt);
+        } else if (pt.x >= imgCenterX && pt.y < imgCenterY) {
+          topRightQuadrant.add(pt);
+        } else if (pt.x < imgCenterX && pt.y >= imgCenterY) {
+          bottomLeftQuadrant.add(pt);
+        } else {
+          bottomRightQuadrant.add(pt);
+        }
+      }
+
+      _log(
+        'Quadrant distribution: TL=${topLeftQuadrant.length} TR=${topRightQuadrant.length} BL=${bottomLeftQuadrant.length} BR=${bottomRightQuadrant.length}',
+      );
+
+      // Find the most extreme corner in each quadrant
+      // For top-left: minimize (x + y)
+      topLeft = topLeftQuadrant.isEmpty
+          ? cv.Point2f(0, 0)
+          : topLeftQuadrant.reduce((a, b) => (a.x + a.y < b.x + b.y) ? a : b);
+
+      // For top-right: maximize (x - y)
+      topRight = topRightQuadrant.isEmpty
+          ? cv.Point2f(resized.width.toDouble(), 0)
+          : topRightQuadrant.reduce((a, b) => (a.x - a.y > b.x - b.y) ? a : b);
+
+      // For bottom-left: minimize (x - y)
+      bottomLeft = bottomLeftQuadrant.isEmpty
+          ? cv.Point2f(0, resized.height.toDouble())
+          : bottomLeftQuadrant.reduce(
+              (a, b) => (a.x - a.y < b.x - b.y) ? a : b,
+            );
+
+      // For bottom-right: maximize (x + y)
+      bottomRight = bottomRightQuadrant.isEmpty
+          ? cv.Point2f(resized.width.toDouble(), resized.height.toDouble())
+          : bottomRightQuadrant.reduce(
+              (a, b) => (a.x + a.y > b.x + b.y) ? a : b,
+            );
+
+      // Refine corners to sub-pixel accuracy for better precision
+      final refinedCorners = cv.VecPoint2f.fromList([
+        topLeft,
+        topRight,
+        bottomLeft,
+        bottomRight,
+      ]);
+      cv.cornerSubPix(resized, refinedCorners, (5, 5), (-1, -1));
+      topLeft = refinedCorners[0];
+      topRight = refinedCorners[1];
+      bottomLeft = refinedCorners[2];
+      bottomRight = refinedCorners[3];
+      refinedCorners.dispose();
+
+      corners.dispose();
+
+      _log('Fallback corners selected and refined');
+    } else {
+      _log(
+        'Quadrilateral board found with area: ${maxArea.toStringAsFixed(0)}',
+      );
+
+      // Extract corners from the best contour (should have 4 points)
+      _log('Contour has ${bestContourPoints.length} points');
+
+      // Order points: top-left, top-right, bottom-right, bottom-left
+      bestContourPoints.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
+      topLeft = cv.Point2f(
+        bestContourPoints[0].x.toDouble(),
+        bestContourPoints[0].y.toDouble(),
+      );
+      bottomRight = cv.Point2f(
+        bestContourPoints.last.x.toDouble(),
+        bestContourPoints.last.y.toDouble(),
+      );
+
+      bestContourPoints.sort((a, b) => (a.x - a.y).compareTo(b.x - b.y));
+      bottomLeft = cv.Point2f(
+        bestContourPoints[0].x.toDouble(),
+        bestContourPoints[0].y.toDouble(),
+      );
+      topRight = cv.Point2f(
+        bestContourPoints.last.x.toDouble(),
+        bestContourPoints.last.y.toDouble(),
+      );
+
+      _log('Corners extracted from quadrilateral contour');
+    } // Validate that corners form a reasonable quadrilateral
     final width1 = math.sqrt(
       math.pow(topRight.x - topLeft.x, 2) + math.pow(topRight.y - topLeft.y, 2),
     );
@@ -194,7 +355,6 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       mat.dispose();
       gray.dispose();
       if (scale < 1.0) resized.dispose();
-      corners.dispose();
       throw ChessboardExtractionException(
         ChessboardExtractionError.boardTooSmall,
         details: '${minDimension.toStringAsFixed(0)} pixels',
@@ -251,22 +411,21 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       );
     }
 
-    if (maxRatio > 1.15) {
+    if (maxRatio > 1.25) {
       _log(
-        'WARNING: Distortion detected (ratio: ${maxRatio.toStringAsFixed(2)}). May affect quality. Try capturing more straight-on.',
+        'WARNING: High distortion detected (ratio: ${maxRatio.toStringAsFixed(2)}). May affect quality. Try capturing more straight-on.',
       );
     }
 
-    // Reject captures with severe distortion (ratio > 1.2)
+    // Reject captures with severe distortion (ratio > 1.35)
     // These typically result in poor quality extractions due to incorrect corner detection
-    if (maxRatio > 1.2) {
+    if (maxRatio > 1.35) {
       _log(
         'ERROR: Corner detection too distorted (ratio: ${maxRatio.toStringAsFixed(2)}). Please capture the board more straight-on for better corner detection.',
       );
       mat.dispose();
       gray.dispose();
       if (scale < 1.0) resized.dispose();
-      corners.dispose();
       topLeft.dispose();
       topRight.dispose();
       bottomLeft.dispose();
@@ -300,35 +459,9 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     final origBottomLeft = bottomLeft;
     final origBottomRight = bottomRight;
 
-    // Add small margin inward to avoid partial squares at board edges
-    // Calculate the center point of the board
-    final centerX = (topLeft.x + topRight.x + bottomLeft.x + bottomRight.x) / 4;
-    final centerY = (topLeft.y + topRight.y + bottomLeft.y + bottomRight.y) / 4;
-
-    // Apply inward margin (1.5% to trim background noise at board edges)
-    // This helps remove partial squares and background at the board perimeter
-    const marginRatio = 0.015;
-    topLeft = cv.Point2f(
-      topLeft.x + (centerX - topLeft.x) * marginRatio,
-      topLeft.y + (centerY - topLeft.y) * marginRatio,
-    );
-    topRight = cv.Point2f(
-      topRight.x + (centerX - topRight.x) * marginRatio,
-      topRight.y + (centerY - topRight.y) * marginRatio,
-    );
-    bottomLeft = cv.Point2f(
-      bottomLeft.x + (centerX - bottomLeft.x) * marginRatio,
-      bottomLeft.y + (centerY - bottomLeft.y) * marginRatio,
-    );
-    bottomRight = cv.Point2f(
-      bottomRight.x + (centerX - bottomRight.x) * marginRatio,
-      bottomRight.y + (centerY - bottomRight.y) * marginRatio,
-    );
-    _log('Applied inward margin to avoid partial squares');
-
-    _log(
-      'Corners after margin: TL(${topLeft.x},${topLeft.y}) TR(${topRight.x},${topRight.y}) BL(${bottomLeft.x},${bottomLeft.y}) BR(${bottomRight.x},${bottomRight.y})',
-    );
+    // No margin applied - use detected corners directly
+    // Previous inward margin was causing too much cropping
+    _log('Using detected corners without margin adjustment');
 
     // Calculate output size
     final topWidth =
@@ -364,7 +497,6 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       mat.dispose();
       gray.dispose();
       if (scale < 1.0) resized.dispose();
-      corners.dispose();
       topLeft.dispose();
       topRight.dispose();
       bottomLeft.dispose();
@@ -410,10 +542,15 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     final boardWidth = maxX - minX;
     final boardHeight = maxY - minY;
 
-    // Add padding (5%) to ensure we don't clip the board edges
-    final paddingFactor = 1.05;
-    final cropWidth = (boardWidth * paddingFactor).toInt();
-    final cropHeight = (boardHeight * paddingFactor).toInt();
+    // Add minimal padding (2%) to ensure we don't clip the board edges
+    // Reduced from 5% to minimize noise inclusion
+    final paddingFactor = 1.02;
+    var cropWidth = (boardWidth * paddingFactor).toInt();
+    var cropHeight = (boardHeight * paddingFactor).toInt();
+
+    // Ensure crop dimensions don't exceed image dimensions
+    cropWidth = math.min(cropWidth, gray.width);
+    cropHeight = math.min(cropHeight, gray.height);
 
     // Center the crop on the detected board
     final boardCenterX = (minX + maxX) / 2;
@@ -502,7 +639,6 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     mat.dispose();
     gray.dispose();
     if (scale < 1.0) resized.dispose();
-    corners.dispose();
     topLeft.dispose();
     topRight.dispose();
     bottomLeft.dispose();
