@@ -28,7 +28,7 @@ Future<Uint8List?> heavyIsolationComputation(Uint8List imageData) async {
   } catch (e, stackTrace) {
     developer.log('Error in image processing: $e', name: 'ChessboardOCR');
     developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
-    return null;
+    rethrow; // Re-throw to let the UI handle it
   }
 }
 
@@ -253,11 +253,30 @@ class _BoardPhotoToIsolatedBoardPhotoState
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return CircularProgressIndicator();
               } else if (snapshot.hasError) {
-                return Text(
-                  'Error: ${snapshot.error}',
-                  style: const TextStyle(color: Colors.red),
-                  textAlign: TextAlign.center,
-                );
+                // Show Snackbar with error message
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    final error = snapshot.error;
+                    final message = error is ChessboardExtractionException
+                        ? error.getUserMessage()
+                        : 'An unexpected error occurred: $error';
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(message),
+                        backgroundColor: Colors.red,
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
+                    // Reset to camera view
+                    setState(() {
+                      _fenFuture = null;
+                      _isProcessing = false;
+                    });
+                  }
+                });
+                // Show loading indicator briefly while resetting
+                return CircularProgressIndicator();
               } else if (snapshot.hasData) {
                 return Column(
                   mainAxisSize: MainAxisSize.min,
