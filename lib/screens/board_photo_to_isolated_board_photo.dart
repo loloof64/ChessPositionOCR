@@ -1,17 +1,35 @@
-import 'dart:typed_data';
-
 import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
-import 'package:chess_position_ocr/core/logger.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_isolate/flutter_isolate.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:saver_gallery/saver_gallery.dart';
+import 'package:camera/camera.dart';
+import 'dart:developer' as developer;
+import 'dart:io';
+import 'package:opencv_core/opencv.dart' as cv;
 
 @pragma('vm:entry-point')
-Future<Map<String, dynamic>> heavyIsolationComputation(
-  Uint8List imageData,
-) async {
-  return await extractChessboard(imageData);
+Future<Uint8List?> heavyIsolationComputation(Uint8List imageData) async {
+  try {
+    developer.log(
+      'Starting image processing in isolate',
+      name: 'ChessboardOCR',
+    );
+    developer.log(
+      'Image data size: ${imageData.length} bytes',
+      name: 'ChessboardOCR',
+    );
+
+    final result = await extractChessboard(imageData);
+
+    developer.log(
+      'Image processing completed successfully',
+      name: 'ChessboardOCR',
+    );
+    return result;
+  } catch (e, stackTrace) {
+    developer.log('Error in image processing: $e', name: 'ChessboardOCR');
+    developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
+    return null;
+  }
 }
 
 class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
@@ -24,37 +42,213 @@ class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
 
 class _BoardPhotoToIsolatedBoardPhotoState
     extends State<BoardPhotoToIsolatedBoardPhoto> {
-  final ImagePicker _picker = ImagePicker();
-  Uint8List? _image;
-  Future<Map<String, dynamic>>? _fenFuture;
+  CameraController? _cameraController;
+  List<CameraDescription>? _cameras;
+  Future<Uint8List?>? _fenFuture;
+  bool _isProcessing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      developer.log('Initializing camera...', name: 'ChessboardOCR');
+      _cameras = await availableCameras();
+      if (_cameras != null && _cameras!.isNotEmpty) {
+        _cameraController = CameraController(
+          _cameras![0],
+          ResolutionPreset.low, // Use lower resolution to reduce buffer usage
+          enableAudio: false,
+          imageFormatGroup: ImageFormatGroup.jpeg,
+        );
+
+        // Set capture settings to reduce buffer usage
+        await _cameraController!.initialize();
+
+        // Reduce frame rate to minimize buffer allocation
+        await _cameraController!.setFocusMode(FocusMode.auto);
+        await _cameraController!.setExposureMode(ExposureMode.auto);
+
+        developer.log('Camera initialized successfully', name: 'ChessboardOCR');
+        if (mounted) {
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      developer.log('Camera initialization failed: $e', name: 'ChessboardOCR');
+    }
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    _fenFuture = null;
+    super.dispose();
+  }
 
   Future<void> _takePhotoAndConvert() async {
-    final XFile? image = await _picker.pickImage(source: ImageSource.camera);
-    if (image == null) return;
-
-    final imageData = await image.readAsBytes();
-    final Future<Map<String, dynamic>> fenFuture = flutterCompute(
-      heavyIsolationComputation,
-      imageData,
-    );
+    if (_isProcessing) {
+      developer.log('Photo already being processed', name: 'ChessboardOCR');
+      return;
+    }
 
     setState(() {
-      _image = imageData;
-      _fenFuture = fenFuture;
+      _isProcessing = true;
     });
+
+    XFile? image;
+    try {
+      developer.log('Taking photo...', name: 'ChessboardOCR');
+
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        developer.log('Camera not initialized', name: 'ChessboardOCR');
+        return;
+      }
+
+      // Pause preview to reduce buffer usage during capture
+      await _cameraController!.pausePreview();
+
+      image = await _cameraController!.takePicture();
+      developer.log(
+        'Photo taken successfully, path: ${image.path}',
+        name: 'ChessboardOCR',
+      );
+      developer.log('Photo name: ${image.name}', name: 'ChessboardOCR');
+
+      // Resume preview after capture
+      await _cameraController!.resumePreview();
+
+      // Step 1: Read image bytes
+      developer.log('Reading image bytes...', name: 'ChessboardOCR');
+      final imageData = await image.readAsBytes();
+      developer.log(
+        'Image loaded: ${imageData.length} bytes',
+        name: 'ChessboardOCR',
+      );
+
+      // Step 2: Test OpenCV processing
+      final Future<Uint8List?>
+      fenFuture = Future.delayed(Duration(seconds: 1), () async {
+        try {
+          developer.log('Starting OpenCV processing...', name: 'ChessboardOCR');
+
+          // Decode image with OpenCV
+          final mat = cv.imdecode(imageData, cv.IMREAD_COLOR);
+          developer.log(
+            'OpenCV decode successful: ${mat.width}x${mat.height}',
+            name: 'ChessboardOCR',
+          );
+
+          // Process the image with our full pipeline
+          final result = await extractChessboard(imageData);
+
+          // Clean up
+          mat.dispose();
+          developer.log(
+            'Processing completed successfully',
+            name: 'ChessboardOCR',
+          );
+
+          return result;
+        } catch (e, stackTrace) {
+          developer.log('OpenCV processing failed: $e', name: 'ChessboardOCR');
+          developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
+          return null;
+        }
+      });
+
+      setState(() {
+        _fenFuture = fenFuture;
+      });
+
+      developer.log('Processing future created', name: 'ChessboardOCR');
+    } catch (e, stackTrace) {
+      developer.log('Error in _takePhotoAndConvert: $e', name: 'ChessboardOCR');
+      developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
+
+      // Resume preview if there was an error
+      try {
+        if (_cameraController != null &&
+            _cameraController!.value.isInitialized) {
+          await _cameraController!.resumePreview();
+        }
+      } catch (resumeError) {
+        developer.log(
+          'Error resuming preview: $resumeError',
+          name: 'ChessboardOCR',
+        );
+      }
+
+      // Clean up temporary file
+      if (image != null) {
+        try {
+          final file = File(image.path);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (deleteError) {
+          developer.log(
+            'Error deleting temp file: $deleteError',
+            name: 'ChessboardOCR',
+          );
+        }
+      }
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final content = _fenFuture == null
-        ? Container()
-        : FutureBuilder<Map<String, dynamic>>(
+        ? (_cameraController != null && _cameraController!.value.isInitialized
+              ? Stack(
+                  children: [
+                    CameraPreview(_cameraController!),
+                    Positioned(
+                      bottom: 50,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: FloatingActionButton(
+                          onPressed: _isProcessing
+                              ? null
+                              : _takePhotoAndConvert,
+                          backgroundColor: _isProcessing
+                              ? Colors.grey
+                              : Colors.white,
+                          child: _isProcessing
+                              ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.black,
+                                    ),
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.black,
+                                  size: 32,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Center(child: CircularProgressIndicator()))
+        : FutureBuilder<Uint8List?>(
             future: _fenFuture,
             builder: (context, snapshot) {
-              final data = snapshot.data;
-              final stepsImagesBytes = data?['steps'] as List<Uint8List>?;
-              final dstBytes = data?['dst'] as Uint8List?;
-              final error = data?['error'] as String?;
+              final imageData = snapshot.data;
 
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return CircularProgressIndicator();
@@ -65,53 +259,40 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   textAlign: TextAlign.center,
                 );
               } else if (snapshot.hasData) {
-                if (error != null) {
-                  logger.e(error);
-                }
-
-                if (stepsImagesBytes?.isNotEmpty == true) {
-                  var i = 0;
-                  for (final bytes in stepsImagesBytes!) {
-                    saveToGallery(bytes, "step_$i", "jpg");
-                    i++;
-                  }
-                }
-
-                return SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    spacing: 20,
-                    children: [
-                      if (_image != null)
-                        Image.memory(_image!, width: 300, fit: BoxFit.cover),
-                      if (stepsImagesBytes?.isNotEmpty == true)
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: stepsImagesBytes!
-                                .map(
-                                  (bytes) => Image.memory(
-                                    bytes,
-                                    width: 300,
-                                    fit: BoxFit.cover,
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ),
-                      if (error != null)
-                        Text(
-                          error,
-                          style: const TextStyle(color: Colors.red),
-                          textAlign: TextAlign.center,
-                        ),
-                      if (dstBytes != null)
-                        Image.memory(dstBytes, fit: BoxFit.cover),
-                    ],
-                  ),
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  spacing: 20,
+                  children: [
+                    if (imageData != null)
+                      Image.memory(imageData, fit: BoxFit.cover),
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _fenFuture = null;
+                          _isProcessing = false;
+                        });
+                      },
+                      child: Text('Take Another Photo'),
+                    ),
+                  ],
                 );
               } else {
-                return const Text("No image generated.");
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text("Photo taken successfully!"),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _fenFuture = null;
+                          _isProcessing = false;
+                        });
+                      },
+                      child: Text('Take Another Photo'),
+                    ),
+                  ],
+                );
               }
             },
           );
@@ -130,22 +311,4 @@ class _BoardPhotoToIsolatedBoardPhotoState
       body: Center(child: content),
     );
   }
-}
-
-// Save image from Uint8List to gallery
-Future<bool> saveToGallery(
-  Uint8List imageBytes,
-  String fileName,
-  String extension,
-) async {
-  // Save the image to the gallery (Pictures directory)
-  final result = await SaverGallery.saveImage(
-    imageBytes,
-    quality: 100,
-    extension: extension,
-    fileName: fileName,
-    skipIfExists: false,
-  );
-
-  return result.isSuccess;
 }
