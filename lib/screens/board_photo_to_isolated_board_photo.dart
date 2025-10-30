@@ -60,7 +60,8 @@ class _BoardPhotoToIsolatedBoardPhotoState
       if (_cameras != null && _cameras!.isNotEmpty) {
         _cameraController = CameraController(
           _cameras![0],
-          ResolutionPreset.low, // Use lower resolution to reduce buffer usage
+          ResolutionPreset
+              .medium, // Increased to medium for better quality (480×640)
           enableAudio: false,
           imageFormatGroup: ImageFormatGroup.jpeg,
         );
@@ -334,7 +335,7 @@ class _BoardPhotoToIsolatedBoardPhotoState
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text('Chessboard isolation'), 
+        title: Text('Chessboard isolation'),
       ),
       body: Center(child: content),
     );

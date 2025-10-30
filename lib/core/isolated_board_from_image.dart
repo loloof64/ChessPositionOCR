@@ -89,8 +89,10 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     final blurred = cv.gaussianBlur(resized, (5, 5), 0);
     _log('Gaussian blur applied');
 
-    // Use Canny edge detection - better for finding actual edges
-    final edges = cv.canny(blurred, 50, 150);
+    // Use Canny edge detection with adjusted thresholds for various board styles
+    // Lower threshold (30) helps detect boards with lower contrast
+    // Higher threshold (120) reduced to be less aggressive
+    final edges = cv.canny(blurred, 30, 120);
     _log('Canny edge detection applied');
     blurred.dispose();
 
@@ -134,31 +136,33 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       final contour = contours[i];
       final area = cv.contourArea(contour);
 
-      // Skip very small contours
-      if (area < 5000) {
+      // Skip very small contours (reduced for smaller boards)
+      if (area < 3000) {
         continue;
       }
 
       // Approximate the contour to a polygon
+      // Use more flexible epsilon for varied board styles
       final peri = cv.arcLength(contour, true);
-      final approx = cv.approxPolyDP(contour, 0.02 * peri, true);
+      final approx = cv.approxPolyDP(contour, 0.03 * peri, true);
 
       // Look for quadrilaterals (4 sides)
       if (approx.length == 4) {
         final areaRatio = area / imageArea;
 
-        // Reject if too large (>90% of image = likely the border)
-        // or too close to edges
+        // Reject if too large (>88% of image = likely the border)
+        // Made stricter to avoid false positives
         bool isValid = true;
 
-        if (areaRatio > 0.90) {
+        if (areaRatio > 0.88) {
           _log(
             'Rejecting contour: too large (${(areaRatio * 100).toStringAsFixed(1)}% of image)',
           );
           isValid = false;
         } else {
           // Check if corners are too close to image borders
-          const edgeThreshold = 8; // pixels from edge
+          // Reduced threshold for boards that extend closer to edges
+          const edgeThreshold = 5; // pixels from edge
           for (int j = 0; j < approx.length; j++) {
             final pt = approx[j];
             if (pt.x < edgeThreshold ||
@@ -348,7 +352,8 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     final avgHeight = (height1 + height2) / 2;
     final minDimension = math.min(avgWidth, avgHeight);
 
-    if (minDimension < 100) {
+    // Reduced minimum size to support smaller boards or distant captures
+    if (minDimension < 80) {
       _log(
         'ERROR: Detected board is too small (${minDimension.toStringAsFixed(0)} pixels). Please get closer to the board.',
       );
@@ -411,15 +416,15 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       );
     }
 
-    if (maxRatio > 1.25) {
+    if (maxRatio > 1.3) {
       _log(
         'WARNING: High distortion detected (ratio: ${maxRatio.toStringAsFixed(2)}). May affect quality. Try capturing more straight-on.',
       );
     }
 
-    // Reject captures with severe distortion (ratio > 1.35)
-    // These typically result in poor quality extractions due to incorrect corner detection
-    if (maxRatio > 1.35) {
+    // Reject captures with severe distortion (ratio > 1.5)
+    // Increased tolerance to support more varied capture angles and board styles
+    if (maxRatio > 1.5) {
       _log(
         'ERROR: Corner detection too distorted (ratio: ${maxRatio.toStringAsFixed(2)}). Please capture the board more straight-on for better corner detection.',
       );
