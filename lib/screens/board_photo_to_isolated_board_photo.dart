@@ -1,10 +1,19 @@
 import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
-import 'package:flutter/foundation.dart';
+import 'package:chess_position_ocr/core/fen_recognition.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:opencv_core/opencv.dart' as cv;
+
+// Data class to hold both isolated board image and FEN prediction
+class BoardAnalysisResult {
+  final Uint8List isolatedBoard;
+  final String fen;
+
+  BoardAnalysisResult({required this.isolatedBoard, required this.fen});
+}
 
 @pragma('vm:entry-point')
 Future<Uint8List?> heavyIsolationComputation(Uint8List imageData) async {
@@ -44,20 +53,36 @@ class _BoardPhotoToIsolatedBoardPhotoState
     extends State<BoardPhotoToIsolatedBoardPhoto> {
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
-  Future<Uint8List?>? _fenFuture;
+  Future<BoardAnalysisResult?>? _fenFuture;
   bool _isProcessing = false;
+  bool _isDisposed = false;
+  final FenRecognizer _fenRecognizer = FenRecognizer();
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
+    _initializeModel();
+  }
+
+  Future<void> _initializeModel() async {
+    try {
+      await _fenRecognizer.initialize();
+    } catch (e) {
+      developer.log(
+        'Failed to initialize FenRecognizer: $e',
+        name: 'ChessboardOCR',
+      );
+    }
   }
 
   Future<void> _initializeCamera() async {
+    if (_isDisposed) return;
+
     try {
       developer.log('Initializing camera...', name: 'ChessboardOCR');
       _cameras = await availableCameras();
-      if (_cameras != null && _cameras!.isNotEmpty) {
+      if (_cameras != null && _cameras!.isNotEmpty && !_isDisposed) {
         _cameraController = CameraController(
           _cameras![0],
           ResolutionPreset
@@ -67,14 +92,25 @@ class _BoardPhotoToIsolatedBoardPhotoState
         );
 
         // Set capture settings to reduce buffer usage
-        await _cameraController!.initialize();
+        try {
+          await _cameraController!.initialize();
+        } catch (initError) {
+          developer.log(
+            'Camera initialization error: $initError',
+            name: 'ChessboardOCR',
+          );
+          _cameraController = null;
+          return;
+        }
 
         // Reduce frame rate to minimize buffer allocation
-        await _cameraController!.setFocusMode(FocusMode.auto);
-        await _cameraController!.setExposureMode(ExposureMode.auto);
+        try {
+          await _cameraController!.setFocusMode(FocusMode.auto);
+          await _cameraController!.setExposureMode(ExposureMode.auto);
+        } catch (_) {}
 
         developer.log('Camera initialized successfully', name: 'ChessboardOCR');
-        if (mounted) {
+        if (mounted && !_isDisposed) {
           setState(() {});
         }
       }
@@ -85,14 +121,65 @@ class _BoardPhotoToIsolatedBoardPhotoState
 
   @override
   void dispose() {
-    _cameraController?.dispose();
-    _fenFuture = null;
+    _isDisposed = true;
+
+    // Stop preview first to prevent ongoing operations
+    try {
+      if (_cameraController != null && _cameraController!.value.isInitialized) {
+        _cameraController!.stopImageStream();
+      }
+    } catch (_) {}
+
+    try {
+      if (_cameraController != null &&
+          _cameraController!.value.isRecordingVideo) {
+        _cameraController!.stopVideoRecording();
+      }
+    } catch (_) {}
+
+    // Pause preview to stop any pending state updates
+    try {
+      if (_cameraController != null && _cameraController!.value.isInitialized) {
+        _cameraController!.pausePreview();
+      }
+    } catch (_) {}
+
+    // Give the platform channel time to process the pause before disposing
+    // This prevents the observer from trying to send state updates after disposal
+    Future.delayed(Duration(milliseconds: 100), () {
+      try {
+        _cameraController?.dispose();
+      } catch (e) {
+        developer.log('Error disposing camera: $e', name: 'ChessboardOCR');
+      }
+      _cameraController = null;
+
+      // Then dispose other resources
+      _fenRecognizer.dispose();
+      _fenFuture = null;
+    });
+
+    // Call super.dispose() immediately
     super.dispose();
   }
 
   Future<void> _takePhotoAndConvert() async {
-    if (_isProcessing) {
-      developer.log('Photo already being processed', name: 'ChessboardOCR');
+    if (_isProcessing || !mounted) {
+      developer.log(
+        'Photo already being processed or widget disposed',
+        name: 'ChessboardOCR',
+      );
+      return;
+    }
+
+    // Extra safety check for camera controller
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      developer.log('Camera not properly initialized', name: 'ChessboardOCR');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Camera not ready')));
+      }
       return;
     }
 
@@ -110,18 +197,48 @@ class _BoardPhotoToIsolatedBoardPhotoState
         return;
       }
 
-      // Pause preview to reduce buffer usage during capture
-      await _cameraController!.pausePreview();
+      // Pause preview to reduce buffer usage during capture - with extra safety
+      try {
+        if (!_isDisposed &&
+            _cameraController != null &&
+            _cameraController!.value.isInitialized) {
+          await _cameraController!.pausePreview();
+        }
+      } catch (pauseError) {
+        developer.log(
+          'Error pausing preview: $pauseError',
+          name: 'ChessboardOCR',
+        );
+      }
 
       image = await _cameraController!.takePicture();
+
+      // Check if widget was disposed while taking photo
+      if (_isDisposed) {
+        developer.log(
+          'Widget disposed during photo capture',
+          name: 'ChessboardOCR',
+        );
+        return;
+      }
+
       developer.log(
         'Photo taken successfully, path: ${image.path}',
         name: 'ChessboardOCR',
       );
       developer.log('Photo name: ${image.name}', name: 'ChessboardOCR');
 
-      // Resume preview after capture
-      await _cameraController!.resumePreview();
+      // Resume preview after capture - with mounted check
+      try {
+        if (mounted && _cameraController?.value.isInitialized == true) {
+          await _cameraController!.resumePreview();
+        }
+      } catch (resumeError) {
+        developer.log(
+          'Error resuming preview: $resumeError',
+          name: 'ChessboardOCR',
+        );
+      }
 
       // Step 1: Read image bytes
       developer.log('Reading image bytes...', name: 'ChessboardOCR');
@@ -132,10 +249,18 @@ class _BoardPhotoToIsolatedBoardPhotoState
       );
 
       // Step 2: Test OpenCV processing
-      final Future<Uint8List?>
+      final Future<BoardAnalysisResult?>
       fenFuture = Future.delayed(Duration(seconds: 1), () async {
         try {
           developer.log('Starting OpenCV processing...', name: 'ChessboardOCR');
+
+          // Pause camera preview to prevent graphics conflicts during heavy processing
+          try {
+            if (_cameraController != null &&
+                _cameraController!.value.isInitialized) {
+              await _cameraController!.pausePreview();
+            }
+          } catch (_) {}
 
           // Decode image with OpenCV
           final mat = cv.imdecode(imageData, cv.IMREAD_COLOR);
@@ -147,14 +272,28 @@ class _BoardPhotoToIsolatedBoardPhotoState
           // Process the image with our full pipeline
           final result = await extractChessboard(imageData);
 
+          // Convert isolated board to FEN
+          final fen = await _fenRecognizer.imageToFen(result ?? Uint8List(0));
+
           // Clean up
           mat.dispose();
           developer.log(
-            'Processing completed successfully',
+            'Processing completed successfully: $fen',
             name: 'ChessboardOCR',
           );
 
-          return result;
+          // Resume preview after processing
+          try {
+            if (_cameraController != null &&
+                _cameraController!.value.isInitialized) {
+              await _cameraController!.resumePreview();
+            }
+          } catch (_) {}
+
+          return BoardAnalysisResult(
+            isolatedBoard: result ?? Uint8List(0),
+            fen: fen,
+          );
         } catch (e, stackTrace) {
           developer.log('OpenCV processing failed: $e', name: 'ChessboardOCR');
           developer.log('Stack trace: $stackTrace', name: 'ChessboardOCR');
@@ -261,13 +400,22 @@ class _BoardPhotoToIsolatedBoardPhotoState
                   ],
                 )
               : Center(child: CircularProgressIndicator()))
-        : FutureBuilder<Uint8List?>(
+        : FutureBuilder<BoardAnalysisResult?>(
             future: _fenFuture,
             builder: (context, snapshot) {
-              final imageData = snapshot.data;
+              final result = snapshot.data;
+              final fen = result?.fen;
+              final image = result?.isolatedBoard;
 
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return CircularProgressIndicator();
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 20),
+                    Text("Analyzing board..."),
+                  ],
+                );
               } else if (snapshot.hasError) {
                 // Show Snackbar with error message
                 WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -294,22 +442,56 @@ class _BoardPhotoToIsolatedBoardPhotoState
                 // Show loading indicator briefly while resetting
                 return CircularProgressIndicator();
               } else if (snapshot.hasData) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  spacing: 20,
-                  children: [
-                    if (imageData != null)
-                      Image.memory(imageData, fit: BoxFit.cover),
-                    ElevatedButton(
-                      onPressed: () {
-                        setState(() {
-                          _fenFuture = null;
-                          _isProcessing = false;
-                        });
-                      },
-                      child: Text('Take Another Photo'),
-                    ),
-                  ],
+                return SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 20,
+                    children: [
+                      if (image != null && image.isNotEmpty)
+                        Container(
+                          height: 300,
+                          width: 300,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey),
+                          ),
+                          child: Image.memory(image, fit: BoxFit.contain),
+                        ),
+                      if (fen != null && fen.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: SelectableText(
+                            fen,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ElevatedButton(
+                        onPressed: () {
+                          if (fen != null && fen.isNotEmpty) {
+                            Clipboard.setData(ClipboardData(text: fen));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('FEN copied to clipboard'),
+                              ),
+                            );
+                          }
+                        },
+                        child: Text('Copy FEN'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() {
+                            _fenFuture = null;
+                            _isProcessing = false;
+                          });
+                        },
+                        child: Text('Take Another Photo'),
+                      ),
+                    ],
+                  ),
                 );
               } else {
                 return Column(
