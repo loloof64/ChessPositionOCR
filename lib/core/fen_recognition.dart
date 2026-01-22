@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'dart:developer' as developer;
-import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:opencv_core/opencv.dart' as cv;
 
@@ -10,8 +9,8 @@ class FenRecognizer {
   bool _isInitialized = false;
   bool _isDisposed = false;
 
-  // Standard chess piece labels (matching order from original chessboard-recognizer model)
-  // Original model label order: empty, then pieces in order R,N,B,Q,K,P (white), then r,n,b,q,k,p (black)
+  // Standard chess piece labels from linrock/chessboard-recognizer constants.py
+  // FEN_CHARS = '1RNBQKPrnbqkp'
   static const List<String> _defaultLabels = [
     '1', // Empty square (index 0)
     'R', 'N', 'B', 'Q', 'K', 'P', // White pieces (indices 1-6)
@@ -105,13 +104,62 @@ class FenRecognizer {
       throw Exception('Failed to decode board image');
     }
 
-    try {
-      // Resize to a standard size to ensure consistent splitting
-      // 800x800 is a good size (100x100 per square)
-      final resizedBoard = cv.resize(boardMat, (800, 800));
+    developer.log(
+      'Input board size: ${boardMat.width}x${boardMat.height}',
+      name: 'FenRecognizer',
+    );
 
-      final squareHeight = resizedBoard.height ~/ 8;
-      final squareWidth = resizedBoard.width ~/ 8;
+    try {
+      // Resize to 256x256 to match the original chessboard-recognizer training data
+      // The original model was trained on 256x256 chessboard images (32x32 per square)
+      final resizedBoard = cv.resize(boardMat, (256, 256));
+
+      developer.log(
+        'Board resized to: ${resizedBoard.width}x${resizedBoard.height}',
+        name: 'FenRecognizer',
+      );
+
+      // Save a copy of the resized board for debugging (optional)
+      developer.log(
+        'Original board aspect ratio: ${(boardMat.width / boardMat.height).toStringAsFixed(3)} (${boardMat.width}x${boardMat.height})',
+        name: 'FenRecognizer',
+      );
+
+      final squareHeight = resizedBoard.height ~/ 8; // 32
+      final squareWidth = resizedBoard.width ~/ 8; // 32
+
+      developer.log(
+        'Board divided into ${squareWidth}x$squareHeight squares. Board size: ${resizedBoard.width}x${resizedBoard.height}',
+        name: 'FenRecognizer',
+      );
+
+      // Check if we can extract all 8 rows without going out of bounds
+      final maxY = 7 * squareHeight + squareHeight;
+      developer.log(
+        'Square extraction check: maxY=$maxY, boardHeight=${resizedBoard.height}, squareHeight=$squareHeight',
+        name: 'FenRecognizer',
+      );
+      if (maxY > resizedBoard.height) {
+        developer.log(
+          'WARNING: Bottom squares may be out of bounds. MaxY: $maxY, BoardHeight: ${resizedBoard.height}',
+          name: 'FenRecognizer',
+        );
+      }
+
+      // Debug: Check if bottom squares are accessible
+      for (int testRow = 4; testRow < 8; testRow++) {
+        final testY = testRow * squareHeight;
+        developer.log(
+          'Row $testRow Y-coordinate: $testY (max allowed: ${resizedBoard.height - squareHeight})',
+          name: 'FenRecognizer',
+        );
+        if (testY + squareHeight > resizedBoard.height) {
+          developer.log(
+            'ERROR: Row $testRow will be out of bounds!',
+            name: 'FenRecognizer',
+          );
+        }
+      }
 
       final List<String> fenRows = [];
 
@@ -125,21 +173,53 @@ class FenRecognizer {
           final x = col * squareWidth;
           final y = row * squareHeight;
 
+          // Check bounds before extraction
+          if (x + squareWidth > resizedBoard.width ||
+              y + squareHeight > resizedBoard.height) {
+            developer.log(
+              'BOUNDS ERROR: Square [$row,$col] out of bounds: ($x,$y) + (${squareWidth}x$squareHeight) > ${resizedBoard.width}x${resizedBoard.height}',
+              name: 'FenRecognizer',
+            );
+            // Skip this square or use empty
+            if (emptyCount > 0) {
+              rowFen += emptyCount.toString();
+              emptyCount = 0;
+            }
+            emptyCount++;
+            continue;
+          }
+
+          // Log extraction for bottom rows
+          if (row >= 4) {
+            developer.log(
+              'Extracting square [$row,$col] at ($x,$y) size ${squareWidth}x$squareHeight from ${resizedBoard.width}x${resizedBoard.height}',
+              name: 'FenRecognizer',
+            );
+          }
+
           final square = cv.Mat.fromMat(
             resizedBoard,
-            roi: cv.Rect(x, y, squareWidth, squareHeight),
+            roi: cv.Rect(x.toInt(), y.toInt(), squareWidth, squareHeight),
           );
 
-          // Preprocess for model
-          // Resize to 32x32 as expected by the original model
-          final resizedSquare = cv.resize(square, (32, 32));
+          // Check if bottom squares are valid
+          if (row >= 4) {
+            developer.log(
+              'Square [$row,$col] extracted: ${square.width}x${square.height}, isEmpty: ${square.isEmpty}',
+              name: 'FenRecognizer',
+            );
+          }
 
-          // Convert to input format (usually float32 [0,1] or uint8 [0,255])
-          // We'll assume float32 normalized [0,1] for now as it's common for TFLite
-          // But we need to check inputTensor.type.
-          // For now, let's prepare a Float32List.
+          // Check if the square is valid (not empty/null)
+          if (row >= 6) {
+            developer.log(
+              'Square [$row,$col] extracted: ${square.width}x${square.height}, isEmpty: ${square.isEmpty}',
+              name: 'FenRecognizer',
+            );
+          }
 
-          var inputData = _preprocessSquare(resizedSquare, 32, 32);
+          // Preprocess for model - square is already 32x32 since board is 256x256
+          var inputData = _preprocessSquare(square, 32, 32);
 
           // Run inference
           // Output shape is usually [1, num_classes]
@@ -156,16 +236,24 @@ class FenRecognizer {
           final predictedLabel =
               _labels[maxIdx]; // We might need to adjust index mapping
 
-          // Debug logging for first few squares
-          if (row < 2 && col < 4) {
-            developer.log(
-              'Square [$row,$col]: predicted "$predictedLabel" (confidence: ${probs[maxIdx].toStringAsFixed(3)})',
-              name: 'FenRecognizer',
-            );
-          }
+          // Always log all squares to debug white piece detection issue
+          final probsStr = probs
+              .asMap()
+              .entries
+              .where((e) => e.value > 0.05) // Show probabilities > 5%
+              .map((e) => '${_labels[e.key]}:${e.value.toStringAsFixed(3)}')
+              .join(', ');
 
-          // Handle FEN construction
-          if (predictedLabel == '1') {
+          developer.log(
+            'Square [$row,$col]: predicted "$predictedLabel" (confidence: ${probs[maxIdx].toStringAsFixed(3)}), top probs: $probsStr',
+            name: 'FenRecognizer',
+          );
+
+          // Handle FEN construction with confidence threshold
+          // If confidence is too low, treat as empty
+          const double confidenceThreshold =
+              0.5; // Balance between detecting pieces and avoiding false positives
+          if (predictedLabel == '1' || probs[maxIdx] < confidenceThreshold) {
             emptyCount++;
           } else {
             if (emptyCount > 0) {
@@ -176,7 +264,6 @@ class FenRecognizer {
           }
 
           square.dispose();
-          resizedSquare.dispose();
         }
 
         if (emptyCount > 0) {
@@ -188,10 +275,36 @@ class FenRecognizer {
       resizedBoard.dispose();
       boardMat.dispose();
 
+      // Debug: Log the 8x8 grid of predictions
+      developer.log('=== 8x8 Board Grid ===', name: 'FenRecognizer');
+      for (int row = 0; row < 8; row++) {
+        developer.log(
+          'Rank ${8 - row}: ${fenRows[row]}',
+          name: 'FenRecognizer',
+        );
+      }
+
       // Chess FEN starts from rank 8 (top) to rank 1 (bottom)
-      // If the image shows the board from white's perspective, we may need to reverse
-      final finalFen = fenRows.join('/');
+      // Try both normal and reversed orientation to handle board rotation
+      final normalFen = fenRows.join('/');
+      final reversedFen = fenRows.reversed.join('/');
+
+      developer.log(
+        'Generated FEN (normal): $normalFen',
+        name: 'FenRecognizer',
+      );
+      developer.log(
+        'Generated FEN (reversed): $reversedFen',
+        name: 'FenRecognizer',
+      );
+
+      final finalFen = normalFen;
       developer.log('Generated FEN: $finalFen', name: 'FenRecognizer');
+
+      // Log FEN rows for debugging
+      for (int i = 0; i < fenRows.length; i++) {
+        developer.log('Rank ${8 - i}: ${fenRows[i]}', name: 'FenRecognizer');
+      }
 
       return finalFen;
     } catch (e) {
@@ -220,29 +333,31 @@ class FenRecognizer {
   }
 
   Object _preprocessSquare(cv.Mat square, int width, int height) {
-    // Convert OpenCV Mat to grayscale
+    // Convert to grayscale first
     final graySquare = cv.cvtColor(square, cv.COLOR_BGR2GRAY);
 
-    // Get raw bytes
-    final bytes = graySquare.data;
+    // Apply histogram equalization to normalize contrast
+    final enhanced = cv.equalizeHist(graySquare);
 
-    // Create input buffer
-    // Assuming Float32 input [1, height, width, 1]
-    final input = List.generate(
-      1,
-      (i) => List.generate(
-        height,
-        (y) => List.generate(
-          width,
-          (x) => [
-            // Index calculation: (y * width + x)
-            bytes[y * width + x] / 255.0,
-          ],
-        ),
-      ),
-    );
+    // Get raw bytes from enhanced image
+    final Uint8List bytes = Uint8List.fromList(enhanced.data);
+
+    // Create input buffer matching TFLite expected shape [1, 32, 32, 1]
+    final inputList = Float32List(1 * height * width * 1);
+
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final idx = y * width + x;
+        // Normalize pixel values to [0, 1]
+        inputList[idx] = bytes[idx] / 255.0;
+      }
+    }
+
+    // Reshape to [1, 32, 32, 1]
+    final input = inputList.reshape([1, height, width, 1]);
 
     graySquare.dispose();
+    enhanced.dispose();
     return input;
   }
 

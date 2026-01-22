@@ -464,9 +464,9 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     final origBottomLeft = bottomLeft;
     final origBottomRight = bottomRight;
 
-    // No margin applied - use detected corners directly
-    // Previous inward margin was causing too much cropping
-    _log('Using detected corners without margin adjustment');
+    // Use detected corners directly without any margin adjustment
+    // The corners are accurate enough and any margin causes data loss
+    _log('Using detected corners directly for perspective transform');
 
     // Calculate output size
     final topWidth =
@@ -543,88 +543,47 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
       'Bounding box: minX=$minX, maxX=$maxX, minY=$minY, maxY=$maxY, width=${maxX - minX}, height=${maxY - minY}',
     );
 
-    // Calculate tight crop region based on detected board boundaries
-    final boardWidth = maxX - minX;
-    final boardHeight = maxY - minY;
+    // DO NOT crop - use full image for perspective transform to avoid losing board edges
+    // The perspective transform will handle the extraction properly
+    final croppedGray = gray;
 
-    // Add minimal padding (2%) to ensure we don't clip the board edges
-    // Reduced from 5% to minimize noise inclusion
-    final paddingFactor = 1.02;
-    var cropWidth = (boardWidth * paddingFactor).toInt();
-    var cropHeight = (boardHeight * paddingFactor).toInt();
+    _log('Using full image for perspective transform (no cropping)');
 
-    // Ensure crop dimensions don't exceed image dimensions
-    cropWidth = math.min(cropWidth, gray.width);
-    cropHeight = math.min(cropHeight, gray.height);
-
-    // Center the crop on the detected board
-    final boardCenterX = (minX + maxX) / 2;
-    final boardCenterY = (minY + maxY) / 2;
-
-    var cropX = (boardCenterX - cropWidth / 2).toInt();
-    var cropY = (boardCenterY - cropHeight / 2).toInt();
-
-    // Clamp to valid image range
-    cropX = math.max(0, math.min(cropX, gray.width - cropWidth));
-    cropY = math.max(0, math.min(cropY, gray.height - cropHeight));
-
-    // Validate crop parameters before using them
-    if (cropX < 0 ||
-        cropY < 0 ||
-        cropX + cropWidth > gray.width ||
-        cropY + cropHeight > gray.height ||
-        cropWidth <= 0 ||
-        cropHeight <= 0) {
-      _log(
-        'ERROR: Invalid crop region: x=$cropX, y=$cropY, w=$cropWidth, h=$cropHeight, imageSize=${gray.width}x${gray.height}',
-      );
-      return null;
-    }
+    // Adjust corner points to the full image (no offset needed)
+    final adjustedTopLeft = topLeft;
+    final adjustedTopRight = topRight;
+    final adjustedBottomLeft = bottomLeft;
+    final adjustedBottomRight = bottomRight;
 
     _log(
-      'Cropping region: x=$cropX, y=$cropY, w=$cropWidth, h=$cropHeight (rectangular)',
+      'Corners in full image space: TL(${adjustedTopLeft.x},${adjustedTopLeft.y}), TR(${adjustedTopRight.x},${adjustedTopRight.y}), BL(${adjustedBottomLeft.x},${adjustedBottomLeft.y}), BR(${adjustedBottomRight.x},${adjustedBottomRight.y})',
     );
 
-    // Crop the gray image to a rectangular region that encompasses the board
-    final croppedGray = cv.Mat.fromMat(
-      gray,
-      roi: cv.Rect(cropX, cropY, cropWidth, cropHeight),
-    );
-    _log('Cropped image created: ${croppedGray.width}x${croppedGray.height}');
-
-    // Adjust corner points to the cropped coordinate system
-    final adjustedTopLeft = cv.Point2f(topLeft.x - cropX, topLeft.y - cropY);
-    final adjustedTopRight = cv.Point2f(topRight.x - cropX, topRight.y - cropY);
-    final adjustedBottomLeft = cv.Point2f(
-      bottomLeft.x - cropX,
-      bottomLeft.y - cropY,
-    );
-    final adjustedBottomRight = cv.Point2f(
-      bottomRight.x - cropX,
-      bottomRight.y - cropY,
-    );
-
-    _log(
-      'Adjusted corners in cropped space: TL(${adjustedTopLeft.x},${adjustedTopLeft.y})',
-    );
-
-    // Create perspective transformation using cropped image
+    // Create perspective transformation using full image
     final srcPts = cv.VecPoint2f.fromList([
       cv.Point2f(adjustedTopLeft.x, adjustedTopLeft.y),
       cv.Point2f(adjustedTopRight.x, adjustedTopRight.y),
-      cv.Point2f(adjustedBottomRight.x, adjustedBottomRight.y),
       cv.Point2f(adjustedBottomLeft.x, adjustedBottomLeft.y),
+      cv.Point2f(adjustedBottomRight.x, adjustedBottomRight.y),
     ]);
 
     final dstPts = cv.VecPoint2f.fromList([
       cv.Point2f(0, 0),
       cv.Point2f(outputSize.toDouble(), 0),
-      cv.Point2f(outputSize.toDouble(), outputSize.toDouble()),
       cv.Point2f(0, outputSize.toDouble()),
+      cv.Point2f(outputSize.toDouble(), outputSize.toDouble()),
     ]);
 
     _log(
-      'Perspective transform points created (using cropped image, square output)',
+      'Source corners: TL(${adjustedTopLeft.x},${adjustedTopLeft.y}) → (0,0), TR(${adjustedTopRight.x},${adjustedTopRight.y}) → ($outputSize,0), BL(${adjustedBottomLeft.x},${adjustedBottomLeft.y}) → (0,$outputSize), BR(${adjustedBottomRight.x},${adjustedBottomRight.y}) → ($outputSize,$outputSize)',
+    );
+
+    _log(
+      'Input image dimensions for perspective transform: ${croppedGray.width}x${croppedGray.height}',
+    );
+
+    _log(
+      'Perspective transform points created (using full image, square output)',
     );
 
     final perspectiveMatrix = cv.getPerspectiveTransform2f(srcPts, dstPts);
@@ -648,11 +607,9 @@ Future<Uint8List?> extractChessboard(Uint8List memoryImage) async {
     topRight.dispose();
     bottomLeft.dispose();
     bottomRight.dispose();
-    croppedGray.dispose();
-    adjustedTopLeft.dispose();
-    adjustedTopRight.dispose();
-    adjustedBottomLeft.dispose();
-    adjustedBottomRight.dispose();
+    // croppedGray is just a reference to gray (already disposed)
+    // adjustedCorners are just references to the original corners (already disposed)
+    // Do NOT dispose them again to avoid double-free crashes
     srcPts.dispose();
     dstPts.dispose();
     perspectiveMatrix.dispose();

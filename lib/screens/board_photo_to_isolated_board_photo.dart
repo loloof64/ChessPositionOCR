@@ -125,7 +125,9 @@ class _BoardPhotoToIsolatedBoardPhotoState
 
     // Stop preview first to prevent ongoing operations
     try {
-      if (_cameraController != null && _cameraController!.value.isInitialized) {
+      if (_cameraController != null &&
+          _cameraController!.value.isInitialized &&
+          _cameraController!.value.isStreamingImages) {
         _cameraController!.stopImageStream();
       }
     } catch (_) {}
