@@ -252,7 +252,7 @@ class FenRecognizer {
           // Handle FEN construction with confidence threshold
           // If confidence is too low, treat as empty
           const double confidenceThreshold =
-              0.5; // Balance between detecting pieces and avoiding false positives
+              0.52; // Fine-tuned to reduce false positives
           if (predictedLabel == '1' || probs[maxIdx] < confidenceThreshold) {
             emptyCount++;
           } else {
