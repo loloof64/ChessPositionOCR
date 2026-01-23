@@ -26,7 +26,8 @@ Future<(String?, String?)> predictFen(Uint8List memoryImage) async {
   double minSum = double.infinity, maxSum = -double.infinity;
   double minDiff = double.infinity, maxDiff = -double.infinity;
 
-  for (final pt in corners) {
+  final cornersList = corners.toList();
+  for (final pt in cornersList) {
     final x = pt.x;
     final y = pt.y;
     final sum = x + y;

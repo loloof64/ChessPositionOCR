@@ -26,9 +26,11 @@ class FenRecognizer {
     // If disposed, reset the state to allow re-initialization
     if (_isDisposed) {
       _isDisposed = false;
+      _isInitialized = false;
+      _interpreter = null;
     }
 
-    // Close existing interpreter if present
+    // Close existing interpreter if present (handles hot restart)
     if (_interpreter != null) {
       try {
         _interpreter!.close();
@@ -77,6 +79,7 @@ class FenRecognizer {
       _labels = _defaultLabels;
 
       _isInitialized = true;
+      _isDisposed = false;
       developer.log(
         'FenRecognizer initialized successfully',
         name: 'FenRecognizer',
@@ -109,10 +112,11 @@ class FenRecognizer {
       name: 'FenRecognizer',
     );
 
+    cv.Mat? resizedBoard;
     try {
       // Resize to 256x256 to match the original chessboard-recognizer training data
       // The original model was trained on 256x256 chessboard images (32x32 per square)
-      final resizedBoard = cv.resize(boardMat, (256, 256));
+      resizedBoard = cv.resize(boardMat, (256, 256));
 
       developer.log(
         'Board resized to: ${resizedBoard.width}x${resizedBoard.height}',
@@ -244,15 +248,19 @@ class FenRecognizer {
               .map((e) => '${_labels[e.key]}:${e.value.toStringAsFixed(3)}')
               .join(', ');
 
+          // Flag potential issues
+          final lowConfidence = probs[maxIdx] < 0.6;
+          final flagStr = lowConfidence ? ' [LOW CONF]' : '';
+
           developer.log(
-            'Square [$row,$col]: predicted "$predictedLabel" (confidence: ${probs[maxIdx].toStringAsFixed(3)}), top probs: $probsStr',
+            'Square [$row,$col]: predicted "$predictedLabel" (confidence: ${probs[maxIdx].toStringAsFixed(3)})$flagStr, top probs: $probsStr',
             name: 'FenRecognizer',
           );
 
           // Handle FEN construction with confidence threshold
           // If confidence is too low, treat as empty
           const double confidenceThreshold =
-              0.52; // Fine-tuned to reduce false positives
+              0.60; // Optimal threshold - reduces hallucinations
           if (predictedLabel == '1' || probs[maxIdx] < confidenceThreshold) {
             emptyCount++;
           } else {
@@ -272,6 +280,7 @@ class FenRecognizer {
         fenRows.add(rowFen);
       }
 
+      // Dispose all OpenCV resources before returning
       resizedBoard.dispose();
       boardMat.dispose();
 
@@ -308,9 +317,10 @@ class FenRecognizer {
 
       return finalFen;
     } catch (e) {
-      // Ensure cleanup on error
+      // Ensure cleanup on error - dispose all resources
       try {
         boardMat.dispose();
+        resizedBoard?.dispose();
       } catch (_) {
         // Ignore disposal errors
       }
@@ -336,8 +346,11 @@ class FenRecognizer {
     // Convert to grayscale first
     final graySquare = cv.cvtColor(square, cv.COLOR_BGR2GRAY);
 
+    // Apply small Gaussian blur to reduce print noise
+    final blurred = cv.gaussianBlur(graySquare, (3, 3), 0.5);
+
     // Apply histogram equalization to normalize contrast
-    final enhanced = cv.equalizeHist(graySquare);
+    final enhanced = cv.equalizeHist(blurred);
 
     // Get raw bytes from enhanced image
     final Uint8List bytes = Uint8List.fromList(enhanced.data);
@@ -348,7 +361,7 @@ class FenRecognizer {
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
         final idx = y * width + x;
-        // Normalize pixel values to [0, 1]
+        // Normalize pixel values to [0, 1] - standard normalization
         inputList[idx] = bytes[idx] / 255.0;
       }
     }
@@ -357,6 +370,7 @@ class FenRecognizer {
     final input = inputList.reshape([1, height, width, 1]);
 
     graySquare.dispose();
+    blurred.dispose();
     enhanced.dispose();
     return input;
   }
@@ -371,8 +385,11 @@ class FenRecognizer {
     }
 
     _interpreter = null;
+    _labels.clear();
     _isInitialized = false;
     _isDisposed = true;
+
+    developer.log('FenRecognizer disposed', name: 'FenRecognizer');
   }
 
   // Helper method to flip FEN vertically (for testing different board orientations)
