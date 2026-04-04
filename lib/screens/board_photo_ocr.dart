@@ -1,16 +1,14 @@
 import 'package:chess_position_ocr/core/chess_recognizer.dart';
 import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
+import 'package:editable_chess_board/editable_chess_board.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:saver_gallery/saver_gallery.dart';
-import 'package:simple_chess_board/models/piece_type.dart';
 import 'dart:developer' as developer;
 // ignore: unnecessary_import
 import 'dart:typed_data';
-
-import 'package:simple_chess_board/widgets/chessboard.dart';
 
 // Data class to hold both isolated board image and FEN prediction
 class BoardAnalysisResult {
@@ -59,6 +57,9 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
   bool _isProcessing = false;
   bool _isDisposed = false;
   final ImagePicker _imagePicker = ImagePicker();
+  final PositionController _positionController = PositionController(
+    "8/8/8/8/8/8/8/8 w - - 0 1",
+  );
 
   @override
   void initState() {
@@ -138,6 +139,7 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
 
       if (mounted && !_isDisposed) {
         setState(() {
+          _positionController.position = fen;
           _fenFuture = Future.value(
             BoardAnalysisResult(isolatedBoard: isolatedBoard, fen: fen),
           );
@@ -280,7 +282,7 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
         }
 
         final result = snapshot.data!;
-        return _buildSuccessView(result);
+        return _buildSuccessView(result, context);
       },
     );
   }
@@ -310,71 +312,48 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
     );
   }
 
-  Widget _buildSuccessView(BoardAnalysisResult result) {
+  Widget _buildSuccessView(BoardAnalysisResult result, BuildContext context) {
+    final isPortrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 16),
-            const Text(
-              'Isolated Board:',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
             Container(
-              height: 150,
+              height: isPortrait ? 500 : 200,
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Image.memory(result.isolatedBoard, fit: BoxFit.contain),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Result Board:',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              height: 150,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SimpleChessBoard(
-                fen: result.fen,
-                whitePlayerType: PlayerType.computer,
-                blackPlayerType: PlayerType.computer,
-                onMove: ({required move}) => (),
-                onPromote: () => Future.value(PieceType.queen),
-                onPromotionCommited:
-                    ({required moveDone, required pieceType}) => (),
-                onTap: ({required cellCoordinate}) => (),
-                chessBoardColors: ChessBoardColors(),
-                cellHighlights: {},
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'FEN Notation:',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey[300]!),
-              ),
-              child: SelectableText(
-                result.fen,
-                style: const TextStyle(fontSize: 14, fontFamily: 'monospace'),
+              child: EditableChessBoard(
+                boardSize: 250,
+                controller: _positionController,
+                showAdvancedOptions: true,
+                labels: Labels(
+                  playerTurnLabel: 'Player turn :',
+                  whitePlayerLabel: 'White',
+                  blackPlayerLabel: 'Black',
+                  availableCastlesLabel: 'Available castles :',
+                  whiteOOLabel: 'White O-O',
+                  whiteOOOLabel: 'White O-O-O',
+                  blackOOLabel: 'Black O-O',
+                  blackOOOLabel: 'Black O-O-O',
+                  enPassantLabel: 'En passant square :',
+                  drawHalfMovesCountLabel: 'Draw half moves count : ',
+                  moveNumberLabel: 'Move number : ',
+                  submitFieldLabel: 'Validate',
+                  currentPositionLabel: 'Current position: ',
+                  copyFenLabel: 'Copy position',
+                  pasteFenLabel: 'Paste position',
+                  resetPosition: 'Reset position',
+                  standardPosition: 'Standard position',
+                  erasePosition: 'Erase position',
+                ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
@@ -401,7 +380,6 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
