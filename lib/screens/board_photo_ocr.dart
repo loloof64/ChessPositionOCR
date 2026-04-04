@@ -1,10 +1,13 @@
 import 'package:chess_position_ocr/core/chess_recognizer.dart';
 import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
+import 'package:saver_gallery/saver_gallery.dart';
 import 'package:simple_chess_board/models/piece_type.dart';
 import 'dart:developer' as developer;
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:simple_chess_board/widgets/chessboard.dart';
@@ -115,6 +118,15 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
 
       if (isolatedBoard == null || isolatedBoard.isEmpty) {
         throw Exception('Failed to extract chessboard from image');
+      }
+
+      // Saving isolated board as isolated_board.jpg in gallery
+      if (!kReleaseMode) {
+        await SaverGallery.saveImage(
+          isolatedBoard,
+          fileName: 'isolated_board',
+          skipIfExists: false,
+        );
       }
 
       // Generate FEN
