@@ -1,3 +1,6 @@
+import 'dart:developer' as developer;
+import 'dart:typed_data';
+
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -14,57 +17,70 @@ class ChessRecognizer {
     _interpreter = await Interpreter.fromAsset(
       'assets/chess_classifier.tflite',
     );
+
+    // Log actual model tensor details so we know the expected shapes
+    final inputTensors = _interpreter!.getInputTensors();
+    for (int i = 0; i < inputTensors.length; i++) {
+      final t = inputTensors[i];
+      developer.log(
+        'Input tensor $i: name=${t.name}, shape=${t.shape}, type=${t.type}',
+        name: 'ChessRecognizer',
+      );
+    }
+    final outputTensors = _interpreter!.getOutputTensors();
+    for (int i = 0; i < outputTensors.length; i++) {
+      final t = outputTensors[i];
+      developer.log(
+        'Output tensor $i: name=${t.name}, shape=${t.shape}, type=${t.type}',
+        name: 'ChessRecognizer',
+      );
+    }
   }
 
   /// [boardImage] : image of the isolated chessboard from your existing code
   /// Regardless of its size — it will be resized automatically
   Future<String> predictFen(img.Image boardImage) async {
-    assert(_interpreter != null, 'Call load() first');
+    if (_interpreter == null) {
+      await load();
+    }
 
     // 1. Resize to 256×256 (= 8×8 tiles of 32×32)
     final resized = img.copyResize(boardImage, width: 256, height: 256);
 
-    // 2. Extract 64 tiles of 32×32 in grayscale
-    final input = _extractTiles(resized);
+    // 2. Classify each of the 64 tiles individually
+    //    Model input: [1, 32, 32, 1], output: [1, 13]
+    final probs = <List<double>>[];
 
-    // 3. Output tensor [64, 13]
-    final output = List.generate(64, (_) => List.filled(13, 0.0));
-
-    // 4. Inference
-    _interpreter!.run(input, output);
-
-    // 5. Rebuild the FEN
-    return _buildFen(output);
-  }
-
-  /// Returns a tensor [64, 1024] (64 squares × 32×32 normalized pixels)
-  List<List<double>> _extractTiles(img.Image board256) {
-    const tileSize = 32;
-    final tiles = <List<double>>[];
-
-    // Row 0 = top of image = row 8 of FEN (white at bottom)
     for (int row = 0; row < 8; row++) {
       for (int col = 0; col < 8; col++) {
         final tile = img.copyCrop(
-          board256,
-          x: col * tileSize,
-          y: row * tileSize,
-          width: tileSize,
-          height: tileSize,
+          resized,
+          x: col * 32,
+          y: row * 32,
+          width: 32,
+          height: 32,
         );
-        final pixels = <double>[];
-        for (int y = 0; y < tileSize; y++) {
-          for (int x = 0; x < tileSize; x++) {
+
+        // Build input [1, 32, 32, 1] as flat Float32List (1024 floats)
+        final inputBuffer = Float32List(32 * 32);
+        for (int y = 0; y < 32; y++) {
+          for (int x = 0; x < 32; x++) {
             final pixel = tile.getPixel(x, y);
-            final gray =
+            inputBuffer[y * 32 + x] =
                 (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b) / 255.0;
-            pixels.add(gray);
           }
         }
-        tiles.add(pixels);
+
+        // Output [1, 13] as flat Float32List (13 floats)
+        final outputBuffer = Float32List(13);
+
+        // Run inference for this single tile
+        _interpreter!.run(inputBuffer.buffer, outputBuffer.buffer);
+
+        probs.add(outputBuffer.toList());
       }
     }
-    return tiles; // shape [64, 1024]
+    return _buildFen(probs);
   }
 
   String _buildFen(List<List<double>> probs) {

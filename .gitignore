@@ -48,3 +48,4 @@ app.*.map.json
 **/log.txt
 tests.md
 FINE_TUNING_ANALYSIS.md
+.vscode/settings.json

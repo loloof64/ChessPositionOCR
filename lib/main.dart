@@ -30,7 +30,7 @@ class MainWidget extends StatefulWidget {
 }
 
 class _MainWidgetState extends State<MainWidget> {
-  ChessRecognizer _chessRecognizer = ChessRecognizer();
+  final ChessRecognizer _chessRecognizer = ChessRecognizer();
   late Future<void> _loadFuture;
 
   @override
