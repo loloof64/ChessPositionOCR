@@ -1,4 +1,5 @@
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -71,6 +72,22 @@ class ChessRecognizer {
           }
         }
 
+        // Per-tile normalization: zero mean, unit std
+        double mean = 0.0;
+        for (final v in inputBuffer) {
+          mean += v;
+        }
+        mean /= inputBuffer.length;
+        double variance = 0.0;
+        for (final v in inputBuffer) {
+          variance += (v - mean) * (v - mean);
+        }
+        variance /= inputBuffer.length;
+        final std = variance > 1e-6 ? math.sqrt(variance) : 1.0;
+        for (int i = 0; i < inputBuffer.length; i++) {
+          inputBuffer[i] = (inputBuffer[i] - mean) / std;
+        }
+
         // Output [1, 13] as flat Float32List (13 floats)
         final outputBuffer = Float32List(13);
 
@@ -83,7 +100,10 @@ class ChessRecognizer {
     return _buildFen(probs);
   }
 
-  String _buildFen(List<List<double>> probs) {
+  String _buildFen(
+    List<List<double>> probs, {
+    double confidenceThreshold = 0.60,
+  }) {
     final buffer = StringBuffer();
     int emptyCount = 0;
 
@@ -98,6 +118,11 @@ class ChessRecognizer {
             bestVal = tileProbs[i];
             bestIdx = i;
           }
+        }
+
+        // If confidence is below threshold, treat as empty square
+        if (bestVal < confidenceThreshold) {
+          bestIdx = 12;
         }
 
         if (bestIdx == 12) {
