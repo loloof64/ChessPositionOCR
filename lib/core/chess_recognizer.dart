@@ -45,8 +45,11 @@ class ChessRecognizer {
       await load();
     }
 
-    // 1. Resize to 256×256 (= 8×8 tiles of 32×32)
-    final resized = img.copyResize(boardImage, width: 256, height: 256);
+    // 1. Get board dimensions for per-tile extraction
+    final boardW = boardImage.width;
+    final boardH = boardImage.height;
+    final tileW = boardW ~/ 8;
+    final tileH = boardH ~/ 8;
 
     // 2. Classify each of the 64 tiles individually
     //    Model input: [1, 32, 32, 1], output: [1, 13]
@@ -54,12 +57,19 @@ class ChessRecognizer {
 
     for (int row = 0; row < 8; row++) {
       for (int col = 0; col < 8; col++) {
-        final tile = img.copyCrop(
-          resized,
-          x: col * 32,
-          y: row * 32,
+        // Extract tile at native resolution, then resize to 32×32
+        final rawTile = img.copyCrop(
+          boardImage,
+          x: col * tileW,
+          y: row * tileH,
+          width: tileW,
+          height: tileH,
+        );
+        final tile = img.copyResize(
+          rawTile,
           width: 32,
           height: 32,
+          interpolation: img.Interpolation.cubic,
         );
 
         // Build input [1, 32, 32, 1] as flat Float32List (1024 floats)
@@ -102,7 +112,7 @@ class ChessRecognizer {
 
   String _buildFen(
     List<List<double>> probs, {
-    double confidenceThreshold = 0.60,
+    double confidenceThreshold = 0.45,
   }) {
     final buffer = StringBuffer();
     int emptyCount = 0;
