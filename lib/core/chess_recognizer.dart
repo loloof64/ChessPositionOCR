@@ -1,5 +1,4 @@
 import 'dart:developer' as developer;
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -65,8 +64,12 @@ class ChessRecognizer {
           width: tileW,
           height: tileH,
         );
+        // Augmentation du contraste (alternative à l'égalisation)
+        // Appliquer uniquement le contraste
+        final eqTile = img.contrast(rawTile, contrast: 80);
+        // Resize
         final tile = img.copyResize(
-          rawTile,
+          eqTile,
           width: 32,
           height: 32,
           interpolation: img.Interpolation.cubic,
@@ -74,28 +77,21 @@ class ChessRecognizer {
 
         // Build input [1, 32, 32, 1] as flat Float32List (1024 floats)
         final inputBuffer = Float32List(32 * 32);
+        double minVal = 1.0, maxVal = 0.0;
         for (int y = 0; y < 32; y++) {
           for (int x = 0; x < 32; x++) {
             final pixel = tile.getPixel(x, y);
-            inputBuffer[y * 32 + x] =
+            final gray =
                 (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b) / 255.0;
+            inputBuffer[y * 32 + x] = gray;
+            if (gray < minVal) minVal = gray;
+            if (gray > maxVal) maxVal = gray;
           }
         }
-
-        // Per-tile normalization: zero mean, unit std
-        double mean = 0.0;
-        for (final v in inputBuffer) {
-          mean += v;
-        }
-        mean /= inputBuffer.length;
-        double variance = 0.0;
-        for (final v in inputBuffer) {
-          variance += (v - mean) * (v - mean);
-        }
-        variance /= inputBuffer.length;
-        final std = variance > 1e-6 ? math.sqrt(variance) : 1.0;
+        // Normalisation min-max
+        final range = (maxVal - minVal).abs() > 1e-6 ? (maxVal - minVal) : 1.0;
         for (int i = 0; i < inputBuffer.length; i++) {
-          inputBuffer[i] = (inputBuffer[i] - mean) / std;
+          inputBuffer[i] = (inputBuffer[i] - minVal) / range;
         }
 
         // Output [1, 13] as flat Float32List (13 floats)
@@ -112,7 +108,7 @@ class ChessRecognizer {
 
   String _buildFen(
     List<List<double>> probs, {
-    double confidenceThreshold = 0.45,
+    double confidenceThreshold = 0.3,
   }) {
     final buffer = StringBuffer();
     int emptyCount = 0;
