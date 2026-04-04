@@ -1,6 +1,5 @@
 import 'package:chess_position_ocr/core/chess_recognizer.dart';
-import 'package:chess_position_ocr/screens/board_photo_to_isolated_board_photo.dart';
-import 'package:chess_position_ocr/screens/board_photo_to_position.dart';
+import 'package:chess_position_ocr/screens/board_photo_ocr.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -50,18 +49,12 @@ class _MainWidgetState extends State<MainWidget> {
     super.dispose();
   }
 
-  void _goToOCRPage(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const BoardPhotoToPosition()),
-    );
-  }
-
   void _goToBoardIsolationPage(BuildContext context) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const BoardPhotoToIsolatedBoardPhoto(),
+        builder: (context) =>
+            BoardPhotoOCRPage(chessRecognizer: _chessRecognizer),
       ),
     );
   }
@@ -84,12 +77,8 @@ class _MainWidgetState extends State<MainWidget> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 TextButton(
-                  onPressed: () => _goToOCRPage(context),
-                  child: const Text("Go to OCR page"),
-                ),
-                TextButton(
                   onPressed: () => _goToBoardIsolationPage(context),
-                  child: const Text("Go to board isolation page"),
+                  child: const Text("Go to OCR page"),
                 ),
               ],
             ),

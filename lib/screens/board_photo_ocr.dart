@@ -1,7 +1,8 @@
+import 'package:chess_position_ocr/core/chess_recognizer.dart';
 import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
-import 'package:chess_position_ocr/core/fen_recognition.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 import 'dart:developer' as developer;
 import 'dart:typed_data';
 
@@ -39,40 +40,24 @@ Future<Uint8List?> heavyIsolationComputation(Uint8List imageData) async {
   }
 }
 
-class BoardPhotoToIsolatedBoardPhoto extends StatefulWidget {
-  const BoardPhotoToIsolatedBoardPhoto({super.key});
+class BoardPhotoOCRPage extends StatefulWidget {
+  const BoardPhotoOCRPage({super.key, required this.chessRecognizer});
+  final ChessRecognizer chessRecognizer;
 
   @override
-  State<BoardPhotoToIsolatedBoardPhoto> createState() =>
-      _BoardPhotoToIsolatedBoardPhotoState();
+  State<BoardPhotoOCRPage> createState() => _BoardPhotoOCRPageState();
 }
 
-class _BoardPhotoToIsolatedBoardPhotoState
-    extends State<BoardPhotoToIsolatedBoardPhoto> {
+class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
   Future<BoardAnalysisResult?>? _fenFuture;
   bool _isProcessing = false;
   bool _isDisposed = false;
-  final FenRecognizer _fenRecognizer = FenRecognizer();
   final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
-    _initializeModel();
-  }
-
-  Future<void> _initializeModel() async {
-    if (_isDisposed) return;
-    try {
-      await _fenRecognizer.initialize();
-      developer.log('FenRecognizer initialized', name: 'ChessboardOCR');
-    } catch (e) {
-      developer.log(
-        'Failed to initialize FenRecognizer: $e',
-        name: 'ChessboardOCR',
-      );
-    }
   }
 
   Future<void> _initializeCamera() async {
@@ -90,7 +75,6 @@ class _BoardPhotoToIsolatedBoardPhotoState
   @override
   void dispose() {
     _isDisposed = true;
-    _fenRecognizer.dispose();
     super.dispose();
   }
 
@@ -131,7 +115,11 @@ class _BoardPhotoToIsolatedBoardPhotoState
       }
 
       // Generate FEN
-      final fen = await _fenRecognizer.imageToFen(isolatedBoard);
+      final img.Image? isolatedBoardImage = img.decodeImage(isolatedBoard);
+      if (isolatedBoardImage == null) {
+        throw Exception('Failed to decode isolated chessboard image');
+      }
+      final fen = await widget.chessRecognizer.predictFen(isolatedBoardImage);
 
       if (mounted && !_isDisposed) {
         setState(() {
