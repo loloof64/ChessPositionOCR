@@ -1,3 +1,4 @@
+import 'package:chess_position_ocr/core/chess_recognizer.dart';
 import 'package:chess_position_ocr/screens/board_photo_to_isolated_board_photo.dart';
 import 'package:chess_position_ocr/screens/board_photo_to_position.dart';
 import 'package:flutter/material.dart';
@@ -22,8 +23,32 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MainWidget extends StatelessWidget {
+class MainWidget extends StatefulWidget {
   const MainWidget({super.key});
+
+  @override
+  State<MainWidget> createState() => _MainWidgetState();
+}
+
+class _MainWidgetState extends State<MainWidget> {
+  ChessRecognizer _chessRecognizer = ChessRecognizer();
+  late Future<void> _loadFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _loadChessRecognizer();
+  }
+
+  Future<void> _loadChessRecognizer() async {
+    await _chessRecognizer.load();
+  }
+
+  @override
+  void dispose() {
+    _chessRecognizer.dispose();
+    super.dispose();
+  }
 
   void _goToOCRPage(BuildContext context) {
     Navigator.push(
@@ -43,23 +68,34 @@ class MainWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Chess OCR experiment')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextButton(
-              onPressed: () => _goToOCRPage(context),
-              child: Text("Go to OCR page"),
+    return FutureBuilder<void>(
+      future: _loadFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Chess OCR experiment')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('Chess OCR experiment')),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: () => _goToOCRPage(context),
+                  child: const Text("Go to OCR page"),
+                ),
+                TextButton(
+                  onPressed: () => _goToBoardIsolationPage(context),
+                  child: const Text("Go to board isolation page"),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => _goToBoardIsolationPage(context),
-              child: Text("Go to board isolation page"),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
