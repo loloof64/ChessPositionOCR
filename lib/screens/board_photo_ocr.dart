@@ -3,8 +3,11 @@ import 'package:chess_position_ocr/core/isolated_board_from_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
+import 'package:simple_chess_board/models/piece_type.dart';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
+
+import 'package:simple_chess_board/widgets/chessboard.dart';
 
 // Data class to hold both isolated board image and FEN prediction
 class BoardAnalysisResult {
@@ -309,12 +312,37 @@ class _BoardPhotoOCRPageState extends State<BoardPhotoOCRPage> {
             ),
             const SizedBox(height: 12),
             Container(
-              height: 250,
+              height: 150,
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Image.memory(result.isolatedBoard, fit: BoxFit.contain),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Result Board:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              height: 150,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SimpleChessBoard(
+                fen: result.fen,
+                whitePlayerType: PlayerType.computer,
+                blackPlayerType: PlayerType.computer,
+                onMove: ({required move}) => (),
+                onPromote: () => Future.value(PieceType.queen),
+                onPromotionCommited:
+                    ({required moveDone, required pieceType}) => (),
+                onTap: ({required cellCoordinate}) => (),
+                chessBoardColors: ChessBoardColors(),
+                cellHighlights: {},
+              ),
             ),
             const SizedBox(height: 24),
             const Text(
