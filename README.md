@@ -2,7 +2,7 @@
 
 Get chess position from a photo
 
-## Developers
+## Developers
 
 ### Tensorflow lite model
 
